@@ -17,27 +17,34 @@ emotion_map = {
     "Romantic": ["Romance"]
 }
 
-# Create user-movie matrix
-user_movie_matrix = data.pivot_table(
-    index="userId",
-    columns="title",
-    values="rating"
-)
+# Pre-calculate Collaborative Similarity
+user_movie_matrix = data.pivot_table(index="userId", columns="title", values="rating").fillna(0)
+movie_similarity_df = pd.DataFrame(cosine_similarity(user_movie_matrix.T), 
+                                   index=user_movie_matrix.columns, 
+                                   columns=user_movie_matrix.columns)
 
-user_movie_matrix = user_movie_matrix.fillna(0)
-
-# Train model using cosine similarity
-movie_similarity = cosine_similarity(user_movie_matrix.T)
-
-# Convert similarity into dataframe
-movie_similarity_df = pd.DataFrame(
-    movie_similarity,
-    index=user_movie_matrix.columns,
-    columns=user_movie_matrix.columns
-)
-
-# # Calculate similarity
-# similarity = cosine_similarity(user_movie_matrix)
+def recommend_movies_cb(movie_title, emotion):
+    if movie_title not in indices: return []
+    idx = indices[movie_title]
+    
+    # ✅ FIX: Increased pool to 150 so the mood filter actually finds matches
+    sim_scores = sorted(list(enumerate(cosine_sim_cb[idx])), key=lambda x: x[1], reverse=True)[1:150]
+    
+    movie_indices = [i[0] for i in sim_scores]
+    genres = emotion_map.get(emotion, [])
+    
+    recommended, fallback = [], []
+    for i in movie_indices:
+        m_title = movies.iloc[i]["title"]
+        m_genres = movies.iloc[i]["genres"]
+        
+        # Match mood
+        if any(g.lower() in m_genres.lower() for g in genres):
+            recommended.append(m_title)
+        else:
+            fallback.append(m_title)
+            
+    return (recommended + fallback)[:10]
 
 def recommend_movies(movie_title, emotion):
 
