@@ -1,5 +1,11 @@
 import streamlit as st
-from recommender import recommend_movies, movies, get_popular_movies, get_movie_details
+from recommender import (
+    recommend_movies,
+    recommend_movies_cb,
+    movies,
+    get_popular_movies,
+    get_movie_details
+)
 from poster import fetch_poster
 
 st.set_page_config(page_title="Emotion Movie Recommender", layout="wide")
@@ -62,46 +68,52 @@ st.write(popular_movies)
 # ⭐ Recommendation Button
 if st.button("Recommend Movies"):
 
-    # Select algorithm
+    # 1. Algorithm Selection with Error Handling
     if algorithm == "Collaborative Filtering":
         recommendations = recommend_movies(movie_title, emotion)
 
     elif algorithm == "Content-Based":
         try:
             recommendations = recommend_movies_cb(movie_title, emotion)
-        except:
-            st.warning("Content-Based model not implemented yet")
+        except NameError:
+            st.warning("Content-Based model function not found in recommender.py")
+            recommendations = []
+        except Exception as e:
+            st.error(f"Error in Content-Based model: {e}")
             recommendations = []
 
     elif algorithm == "Hybrid":
         try:
+            # Note: You'll need to define this function in recommender.py later
             recommendations = recommend_movies_hybrid(movie_title, emotion)
         except:
             st.warning("Hybrid model not implemented yet")
             recommendations = []
+    else:
+        recommendations = []
 
-    st.subheader("Recommended Movies")
+    # 2. Display Logic (Guarded by recommendations list)
+    if recommendations:
+        st.subheader("Recommended Movies")
+        cols = st.columns(5)
 
-    cols = st.columns(5)
+        for i, movie in enumerate(recommendations):
+            poster = fetch_poster(movie)
+            details = get_movie_details(movie)
 
-    for i, movie in enumerate(recommendations):
+            with cols[i % 5]:
+                # Poster Logic
+                if poster:
+                    st.image(poster)
+                else:
+                    st.image("https://via.placeholder.com/200x300?text=No+Image+Available")
+                    st.caption("🎬 Poster not available")
 
-        poster = fetch_poster(movie)
-        details = get_movie_details(movie)
-
-        with cols[i % 5]:
-
-            if poster:
-                st.image(poster)
-            else:
-                st.image("https://via.placeholder.com/200x300?text=No+Image+Available")
-                st.caption("🎬 Poster not available")
-
-            st.caption(movie)
-
-            if details["rating"] != "N/A":
-                st.caption(f"⭐ {details['rating']}")
-            else:
-                st.caption("⭐ No rating available")
-
-            st.caption(f"🎭 {details['genres']}")
+                # Details Logic (Compact Formatting)
+                st.caption(f"**{movie}**")
+                
+                rating_display = f"⭐ {details['rating']}" if details["rating"] != "N/A" else "⭐ No rating"
+                st.caption(f"{rating_display} | 🎭 {details['genres']}")
+    
+    elif algorithm != "Hybrid": # Don't show a second warning if it's just not implemented
+        st.warning("No recommendations found. Try a different movie or mood!")

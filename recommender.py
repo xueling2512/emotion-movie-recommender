@@ -1,19 +1,23 @@
 import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-# Load dataset
 movies = pd.read_csv("dataset/movies.csv")
 ratings = pd.read_csv("dataset/ratings.csv")
-
-# Merge dataset
 data = pd.merge(ratings, movies, on="movieId")
 
-# Emotion → Genre mapping
+movies["genres"] = movies["genres"].fillna("").str.replace("|", " ", regex=False)
+
+tfidf = TfidfVectorizer(stop_words='english')
+tfidf_matrix = tfidf.fit_transform(movies["genres"])
+cosine_sim_cb = cosine_similarity(tfidf_matrix, tfidf_matrix)
+indices = pd.Series(movies.index, index=movies["title"]).drop_duplicates()
+
 emotion_map = {
     "Happy": ["Comedy", "Animation"],
     "Sad": ["Drama"],
-    "Stressed": ["Comedy"],
-    "Excited": ["Action"],
+    "Stressed": ["Comedy", "Sci-Fi"], # Added Sci-Fi for variety
+    "Excited": ["Action", "Adventure"],
     "Romantic": ["Romance"]
 }
 
