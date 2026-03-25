@@ -1,19 +1,24 @@
 import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-# Load dataset
+links = pd.read_csv("dataset/links.csv")
 movies = pd.read_csv("dataset/movies.csv")
 ratings = pd.read_csv("dataset/ratings.csv")
-
-# Merge dataset
 data = pd.merge(ratings, movies, on="movieId")
 
-# Emotion → Genre mapping
+movies["genres"] = movies["genres"].fillna("").str.replace("|", " ", regex=False)
+
+tfidf = TfidfVectorizer(stop_words='english')
+tfidf_matrix = tfidf.fit_transform(movies["genres"])
+cosine_sim_cb = cosine_similarity(tfidf_matrix, tfidf_matrix)
+indices = pd.Series(movies.index, index=movies["title"]).drop_duplicates()
+
 emotion_map = {
     "Happy": ["Comedy", "Animation"],
     "Sad": ["Drama"],
-    "Stressed": ["Comedy"],
-    "Excited": ["Action"],
+    "Stressed": ["Comedy", "Sci-Fi"], # Added Sci-Fi for variety
+    "Excited": ["Action", "Adventure"],
     "Romantic": ["Romance"]
 }
 
@@ -24,27 +29,37 @@ movie_similarity_df = pd.DataFrame(cosine_similarity(user_movie_matrix.T),
                                    columns=user_movie_matrix.columns)
 
 def recommend_movies_cb(movie_title, emotion):
-    if movie_title not in indices: return []
+    if movie_title not in indices: 
+        return []
+    
     idx = indices[movie_title]
+    # Get similarity scores for ALL movies
+    sim_scores = list(enumerate(cosine_sim_cb[idx]))
     
-    # ✅ FIX: Increased pool to 150 so the mood filter actually finds matches
-    sim_scores = sorted(list(enumerate(cosine_sim_cb[idx])), key=lambda x: x[1], reverse=True)[1:150]
+    # Get genres for the selected emotion
+    target_genres = [g.lower() for g in emotion_map.get(emotion, [])]
     
-    movie_indices = [i[0] for i in sim_scores]
-    genres = emotion_map.get(emotion, [])
-    
-    recommended, fallback = [], []
-    for i in movie_indices:
-        m_title = movies.iloc[i]["title"]
-        m_genres = movies.iloc[i]["genres"]
+    scored_movies = []
+    for i, score in sim_scores:
+        if i == idx: continue  # Skip the movie itself
         
-        # Match mood
-        if any(g.lower() in m_genres.lower() for g in genres):
-            recommended.append(m_title)
-        else:
-            fallback.append(m_title)
+        m_genres = movies.iloc[i]["genres"].lower()
+        
+        # Calculate Bonus: If the movie matches an emotion genre, boost its score
+        # Using a multiplier makes the emotion much more influential
+        bonus = 1.0
+        if any(g in m_genres for g in target_genres):
+            bonus = 5.0 # High multiplier to ensure mood-matching movies rise to the top
             
-    return (recommended + fallback)[:10]
+        final_score = score * bonus
+        scored_movies.append((i, final_score))
+
+    # Sort by the new boosted score
+    scored_movies = sorted(scored_movies, key=lambda x: x[1], reverse=True)
+    
+    # Take top 10
+    recommended_indices = [i[0] for i in scored_movies[:10]]
+    return movies.iloc[recommended_indices]["title"].tolist()
 
 def recommend_movies(movie_title, emotion):
 
@@ -86,19 +101,41 @@ def recommend_movies(movie_title, emotion):
 
     return recommended
 
+def recommend_movies_hybrid(movie_title, emotion):
+    # Get top 5 from both worlds
+    cb_recs = recommend_movies_cb(movie_title, emotion)[:5]
+    cf_recs = recommend_movies(movie_title, emotion)[:5]
+    
+    # Combine and remove duplicates while maintaining order
+    combined = []
+    for m in (cb_recs + cf_recs):
+        if m not in combined:
+            combined.append(m)
+            
+    return combined[:10]
+
 # Get top popular movies (based on average rating)
 def get_popular_movies():
     popular = data.groupby("title")["rating"].mean().sort_values(ascending=False).head(10)
     return popular
 
 # Get movie details (genre + rating)
+# Load links at the top of recommender.py
+
+
 def get_movie_details(movie):
     movie_info = movies[movies["title"] == movie]
+    if movie_info.empty:
+        return {"genres": "N/A", "rating": "N/A", "tmdbId": None}
 
+    # Get the movieId to find the tmdbId
+    movie_id = movie_info["movieId"].values[0]
+    tmdb_id = links[links["movieId"] == movie_id]["tmdbId"].values[0]
+    
     avg_rating = data[data["title"] == movie]["rating"].mean()
 
     return {
-        "genres": movie_info["genres"].values[0].replace("|", ", ")
-        if len(movie_info) > 0 else "N/A",
-        "rating": round(avg_rating, 2) if avg_rating else "N/A"
+        "genres": movie_info["genres"].values[0].replace("|", ", "),
+        "rating": round(avg_rating, 2) if not pd.isna(avg_rating) else "N/A",
+        "tmdbId": tmdb_id # Add this!
     }
