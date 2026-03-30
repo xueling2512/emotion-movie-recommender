@@ -101,18 +101,35 @@ def recommend_movies(movie_title, emotion):
 
     return recommended
 
-def recommend_movies_hybrid(movie_title, emotion):
-    # Get top 5 from both worlds
-    cb_recs = recommend_movies_cb(movie_title, emotion)[:5]
-    cf_recs = recommend_movies(movie_title, emotion)[:5]
+def recommend_movies_hybrid(movie_title, emotion, cb_weight=0.5, cf_weight=0.5):
+    """
+    A Rank-Based Hybrid Recommender.
+    Assigns points to movies based on their rank from both algorithms.
+    Movies that appear in both lists get a combined higher score.
+    """
+    # Fetch top 10 from both algorithms
+    cb_recs = recommend_movies_cb(movie_title, emotion)
+    cf_recs = recommend_movies(movie_title, emotion)
     
-    # Combine and remove duplicates while maintaining order
-    combined = []
-    for m in (cb_recs + cf_recs):
-        if m not in combined:
-            combined.append(m)
-            
-    return combined[:10]
+    hybrid_scores = {}
+    
+    # Score Content-Based recommendations (1st place = 10 pts, 10th place = 1 pt)
+    for rank, movie in enumerate(cb_recs):
+        score = (len(cb_recs) - rank) * cb_weight
+        hybrid_scores[movie] = hybrid_scores.get(movie, 0) + score
+        
+    # Score Collaborative Filtering recommendations
+    for rank, movie in enumerate(cf_recs):
+        score = (len(cf_recs) - rank) * cf_weight
+        hybrid_scores[movie] = hybrid_scores.get(movie, 0) + score
+        
+    # Sort movies by their new combined hybrid score
+    sorted_hybrid = sorted(hybrid_scores.items(), key=lambda x: x[1], reverse=True)
+    
+    # Extract just the titles for the top 10
+    top_hybrid_movies = [movie for movie, score in sorted_hybrid][:10]
+    
+    return top_hybrid_movies
 
 # Get top popular movies (based on average rating)
 def get_popular_movies():
