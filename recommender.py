@@ -1,4 +1,5 @@
 import pandas as pd
+import re
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -6,8 +7,7 @@ links = pd.read_csv("dataset/links.csv")
 movies = pd.read_csv("dataset/movies.csv")
 ratings = pd.read_csv("dataset/ratings.csv")
 data = pd.merge(ratings, movies, on="movieId")
-
-movies["genres"] = movies["genres"].fillna("").str.replace("|", " ", regex=False)
+movies['year'] = movies['title'].apply(lambda x: int(re.search(r'\((\d{4})\)', x).group(1)) if re.search(r'\((\d{4})\)', x) else 0)
 
 tfidf = TfidfVectorizer(stop_words='english')
 tfidf_matrix = tfidf.fit_transform(movies["genres"])
@@ -147,12 +147,55 @@ def get_movie_details(movie):
 
     # Get the movieId to find the tmdbId
     movie_id = movie_info["movieId"].values[0]
-    tmdb_id = links[links["movieId"] == movie_id]["tmdbId"].values[0]
+    tmdb_match = links[links["movieId"] == movie_id]
+
+    tmdb_id = tmdb_match["tmdbId"].values[0] if not tmdb_match.empty else None
     
     avg_rating = data[data["title"] == movie]["rating"].mean()
 
     return {
-        "genres": movie_info["genres"].values[0].replace("|", ", "),
+        "genres": movie_info["genres"].values[0],
         "rating": round(avg_rating, 2) if not pd.isna(avg_rating) else "N/A",
         "tmdbId": tmdb_id # Add this!
     }
+
+
+# Add this helper to extract years during data loading
+def extract_year(title):
+    match = re.search(r'\((\d{4})\)', title)
+    return int(match.group(1)) if match else 0
+
+def global_browse_movies(movies_df, ratings_df, selected_genres=None, min_rating=0.0, sort_by="Rating", sort_order="Descending", year_range=None):
+    df = movies_df.copy()
+    
+    # 1. Attach average ratings
+    avg_ratings = ratings_df.groupby("movieId")["rating"].mean().reset_index()
+    df = df.merge(avg_ratings, on="movieId", how="left")
+    df["rating"] = df["rating"].fillna(0)
+
+    # 2. Filter by Year Range
+    if year_range:
+        df = df[(df["year"] >= year_range[0]) & (df["year"] <= year_range[1])]
+
+    # 3. Filter by Genre
+    if selected_genres:
+        genre_regex = "|".join(selected_genres)
+        df = df[df["genres"].str.contains(genre_regex, case=False, na=False)]
+
+    # 4. Filter by Minimum Rating
+    df = df[df["rating"] >= min_rating]
+
+    # --- UPDATED: Advanced Sorting Logic ---
+    # Map the UI text to actual DataFrame column names
+    sort_map = {
+        "Rating": "rating",
+        "A-Z": "title",
+        "Year": "year"
+    }
+    
+    target_column = sort_map.get(sort_by, "rating")
+    ascending_bool = True if sort_order == "Ascending" else False
+
+    df = df.sort_values(by=target_column, ascending=ascending_bool)
+
+    return df
