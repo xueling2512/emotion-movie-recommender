@@ -238,6 +238,10 @@ def global_browse_movies(movies_df, ratings_df, selected_genres=None, min_rating
     df = df.merge(avg_ratings, on="movieId", how="left")
     df["rating"] = df["rating"].fillna(0)
     
+    # ✅ ADD THIS: Attach TMDB IDs from links.csv
+    global links
+    df = df.merge(links[['movieId', 'tmdbId']], on="movieId", how="left")
+    
     # Filter by Year Range
     if year_range:
         df = df[(df["year"] >= year_range[0]) & (df["year"] <= year_range[1])]
