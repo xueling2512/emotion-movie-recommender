@@ -267,3 +267,177 @@ def global_browse_movies(movies_df, ratings_df, selected_genres=None, min_rating
     df = df.sort_values(by=target_column, ascending=ascending_bool)
     
     return df
+
+# ============================================
+# EVALUATION METRICS
+# ============================================
+
+from sklearn.metrics import mean_squared_error
+from math import sqrt
+import random
+
+def evaluate_recommendations(test_user_id, algorithm_type="collaborative", top_n=10):
+    """
+    Evaluate recommendation quality using Precision, Recall, F1 Score
+    
+    Args:
+        test_user_id (int): User ID to test on
+        algorithm_type (str): "collaborative", "content", or "hybrid"
+        top_n (int): Number of recommendations to evaluate
+    
+    Returns:
+        dict: Precision, Recall, F1 Score
+    """
+    # Get user's actual liked movies (rating >= 4.0)
+    user_actual = data[data["userId"] == test_user_id]
+    liked_movies = set(user_actual[user_actual["rating"] >= 4.0]["title"].tolist())
+    
+    if len(liked_movies) == 0:
+        return {"precision": 0, "recall": 0, "f1": 0, "error": "No liked movies found"}
+    
+    # Get a random movie the user liked to use as input
+    seed_movie = random.choice(list(liked_movies))
+    
+    # Get recommendations based on algorithm type
+    if algorithm_type == "collaborative":
+        recommendations = recommend_movies(seed_movie, "Happy", top_n=top_n)
+    elif algorithm_type == "content":
+        recommendations = recommend_movies_cb(seed_movie, "Happy", top_n=top_n)
+    else:
+        recommendations = recommend_movies_hybrid(seed_movie, "Happy", top_n=top_n)
+    
+    recommended_set = set(recommendations)
+    
+    # Calculate metrics
+    relevant_recommended = len(liked_movies.intersection(recommended_set))
+    
+    precision = relevant_recommended / len(recommended_set) if len(recommended_set) > 0 else 0
+    recall = relevant_recommended / len(liked_movies) if len(liked_movies) > 0 else 0
+    f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+    
+    return {
+        "precision": round(precision, 4),
+        "recall": round(recall, 4),
+        "f1": round(f1, 4),
+        "total_liked": len(liked_movies),
+        "recommendations_found": len(recommended_set)
+    }
+
+
+def evaluate_all_algorithms(user_id, top_n=10):
+    """
+    Compare all three algorithms for a specific user
+    
+    Returns:
+        DataFrame with comparison results
+    """
+    results = {}
+    
+    algorithms = ["collaborative", "content", "hybrid"]
+    algo_names = ["Collaborative Filtering", "Content-Based", "Hybrid"]
+    
+    for algo, name in zip(algorithms, algo_names):
+        result = evaluate_recommendations(user_id, algorithm_type=algo, top_n=top_n)
+        results[name] = result
+    
+    return pd.DataFrame(results).T
+
+
+def calculate_rmse():
+    """
+    Calculate Root Mean Square Error for rating predictions
+    Uses a simple baseline: predict rating = average rating of the movie
+    """
+    # Get all actual ratings
+    actual_ratings = data["rating"].values
+    
+    # Simple baseline: predict using movie's average rating
+    movie_avg_ratings = data.groupby("movieId")["rating"].mean().to_dict()
+    
+    predictions = []
+    actuals = []
+    
+    for _, row in data.iterrows():
+        movie_id = row["movieId"]
+        actual = row["rating"]
+        
+        # Predict using movie average, fallback to global average
+        predicted = movie_avg_ratings.get(movie_id, data["rating"].mean())
+        
+        actuals.append(actual)
+        predictions.append(predicted)
+    
+    rmse = sqrt(mean_squared_error(actuals, predictions))
+    
+    return {
+        "rmse": round(rmse, 4),
+        "total_predictions": len(actuals),
+        "global_avg_rating": round(data["rating"].mean(), 2)
+    }
+
+
+def precision_at_k(user_id, algorithm_type="collaborative", k=5):
+    """
+    Precision@K: How many of top K recommendations are relevant
+    """
+    result = evaluate_recommendations(user_id, algorithm_type, top_n=k)
+    return result["precision"]
+
+
+def recall_at_k(user_id, algorithm_type="collaborative", k=5):
+    """
+    Recall@K: How many relevant items were retrieved in top K
+    """
+    result = evaluate_recommendations(user_id, algorithm_type, top_n=k)
+    return result["recall"]
+
+
+def get_evaluation_summary():
+    """
+    Get comprehensive evaluation summary for documentation
+    """
+    print("=" * 50)
+    print("RECOMMENDER SYSTEM EVALUATION SUMMARY")
+    print("=" * 50)
+    
+    # RMSE Calculation
+    rmse_result = calculate_rmse()
+    print(f"\n📊 RMSE (Rating Prediction Error): {rmse_result['rmse']}")
+    print(f"   - Total predictions: {rmse_result['total_predictions']}")
+    print(f"   - Global average rating: {rmse_result['global_avg_rating']}")
+    
+    # Test on multiple users for more reliable results
+    test_users = data["userId"].unique()[:10]  # Test on first 10 users
+    
+    algo_results = {
+        "Collaborative Filtering": {"precision": [], "recall": [], "f1": []},
+        "Content-Based": {"precision": [], "recall": [], "f1": []},
+        "Hybrid": {"precision": [], "recall": [], "f1": []}
+    }
+    
+    for user in test_users:
+        for algo_name, algo_key in zip(
+            ["Collaborative Filtering", "Content-Based", "Hybrid"],
+            ["collaborative", "content", "hybrid"]
+        ):
+            result = evaluate_recommendations(user, algorithm_type=algo_key, top_n=10)
+            if "error" not in result:
+                algo_results[algo_name]["precision"].append(result["precision"])
+                algo_results[algo_name]["recall"].append(result["recall"])
+                algo_results[algo_name]["f1"].append(result["f1"])
+    
+    print("\n📈 ALGORITHM COMPARISON (Averaged over 10 users):")
+    print("-" * 60)
+    print(f"{'Algorithm':<25} {'Precision':<12} {'Recall':<12} {'F1 Score':<12}")
+    print("-" * 60)
+    
+    for algo_name in algo_results:
+        if algo_results[algo_name]["precision"]:
+            avg_precision = sum(algo_results[algo_name]["precision"]) / len(algo_results[algo_name]["precision"])
+            avg_recall = sum(algo_results[algo_name]["recall"]) / len(algo_results[algo_name]["recall"])
+            avg_f1 = sum(algo_results[algo_name]["f1"]) / len(algo_results[algo_name]["f1"])
+            print(f"{algo_name:<25} {avg_precision:.4f}      {avg_recall:.4f}      {avg_f1:.4f}")
+    
+    print("-" * 60)
+    
+    return algo_results
