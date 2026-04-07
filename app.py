@@ -8,7 +8,9 @@ from recommender import (
     get_popular_movies,
     get_movie_details,
     global_browse_movies,
-    data
+    data,
+    evaluate_recommendations, 
+    calculate_rmse  
 )
 from poster import fetch_poster
 
@@ -114,7 +116,7 @@ def display_movie_card(poster_url, title, rating, genres):
     st.markdown(card_html, unsafe_allow_html=True)
 
 # --- TABS ---
-tab1, tab2, tab3 = st.tabs(["✨ Discover", "📂 Browse Library", "🔥 Trending"])
+tab1, tab2, tab3, tab4 = st.tabs(["✨ Discover", "📂 Browse Library", "🔥 Trending", "📊 Evaluation"])
 
 # ============================================
 # TAB 1: DISCOVER
@@ -271,3 +273,421 @@ with tab3:
                         rating=round(rating, 2),
                         genres=details['genres'].replace('|', ', ')
                     )
+
+# ============================================
+# TAB 4: EVALUATION
+# ============================================
+with tab4:
+    st.header("📊 System Evaluation")
+    
+    st.markdown("""
+    ## Thank you for testing our Emotion-Based Movie Recommender System!
+    
+    Please help us improve by providing your feedback.
+    """)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("📝 User Satisfaction Survey")
+        st.markdown("""
+        Please click the button below to complete our survey.
+        It will take less than 2 minutes.
+        """)
+        
+        # 🔗 REPLACE THIS URL WITH YOUR GOOGLE FORM LINK
+        google_form_url = "https://forms.gle/CWMLeHFWidtPDH358"
+        
+        st.markdown(f"""
+        <a href="{google_form_url}" target="_blank">
+            <button style="
+                background-color: #4CAF50;
+                color: white;
+                padding: 12px 24px;
+                font-size: 16px;
+                border: none;
+                border-radius: 8px;
+                cursor: pointer;
+            ">
+                📋 Take Survey (Google Form)
+            </button>
+        </a>
+        """, unsafe_allow_html=True)
+        
+        st.caption("The form will open in a new tab.")
+    
+    with col2:
+        st.subheader("📊 Evaluation Metrics")
+        st.markdown("""
+        **We measure success using:**
+        
+        - **Precision**: How many recommended movies are relevant
+        - **Recall**: How many relevant movies were found
+        - **F1 Score**: Balance of precision and recall
+        - **RMSE**: Rating prediction accuracy (lower = better)
+        
+        > 📌 For detailed metrics, run the evaluation below:
+        """)
+    
+    # Add divider
+    st.divider()
+    
+    # ============================================
+    # UNDERSTANDING USER ID & TOP-K SECTION
+    # ============================================
+    with st.expander("📚 Understanding User ID & Top-K Recommendations", expanded=False):
+        st.markdown("""
+        ### 👤 What is a User ID?
+        
+        User IDs come from your `ratings.csv` dataset. Each ID represents a real person who rated movies.
+        
+        **How to choose a good User ID:**
+        - Users with **more ratings** (100+) give better evaluation results
+        - Users with **varied ratings** (not all 5 stars) are more realistic
+        - The system will automatically suggest the best users below
+        
+        ### 🎯 What is Top-K?
+        
+        **Top-K** = The number of movie recommendations returned
+        
+        | K Value | Best For | Example |
+        |---------|----------|---------|
+        | K=5-10 | High precision (accuracy) | "Show me my 5 best matches" |
+        | K=10-15 | Balanced performance | "Show me 10 good recommendations" |
+        | K=15-20 | High recall (coverage) | "Show me many options to choose from" |
+        
+        **Default K=10** is recommended for the best balance!
+        """)
+        
+        # Auto-detect best users for testing
+        if st.button("🔍 Find Best User IDs for Testing"):
+            with st.spinner("Analyzing user data..."):
+                # Get user statistics
+                user_stats = data.groupby("userId").agg({
+                    "rating": ["count", "mean"]
+                }).reset_index()
+                user_stats.columns = ["userId", "rating_count", "avg_rating"]
+                user_stats = user_stats.sort_values("rating_count", ascending=False)
+                
+                st.success(f"✅ Found **{len(user_stats)}** users in the system")
+                
+                # Show top 10 users with most ratings
+                st.write("**🏆 Top 10 Users with Most Ratings (Best for Testing):**")
+                
+                top_users = user_stats.head(10).copy()
+                top_users["recommended"] = "✅ Yes"
+                
+                # Display as DataFrame
+                st.dataframe(
+                    top_users[["userId", "rating_count", "avg_rating", "recommended"]],
+                    use_container_width=True,
+                    column_config={
+                        "userId": "User ID",
+                        "rating_count": "Number of Ratings",
+                        "avg_rating": "Average Rating",
+                        "recommended": "Recommended for Testing?"
+                    }
+                )
+                
+                st.info("💡 **Tip:** Use User ID with the highest rating count (usually User 1 or 2) for most reliable evaluation results!")
+    
+    st.divider()
+    
+    # ============================================
+    # EVALUATION CONTROLS
+    # ============================================
+    st.subheader("🔬 Run Algorithm Evaluation")
+    
+    # Get user range
+    min_user = int(data["userId"].min())
+    max_user = int(data["userId"].max())
+    
+    # Find recommended default user (user with most ratings)
+    user_rating_counts = data.groupby("userId").size()
+    default_user = user_rating_counts.idxmax() if not user_rating_counts.empty else 1
+    
+    col_test, col_k, col_info = st.columns([2, 2, 1])
+    
+    with col_test:
+        test_user = st.number_input(
+            "👤 Select User ID for testing", 
+            min_value=min_user, 
+            max_value=max_user, 
+            value=int(default_user),
+            key="eval_user",
+            help="Choose a User ID from your dataset. Users with more ratings give better results!"
+        )
+        
+        # Show selected user's stats
+        user_ratings_count = len(data[data["userId"] == test_user])
+        if user_ratings_count > 0:
+            user_avg_rating = data[data["userId"] == test_user]["rating"].mean()
+            st.caption(f"📊 This user has **{user_ratings_count}** ratings (avg: {user_avg_rating:.2f}⭐)")
+            
+            if user_ratings_count < 50:
+                st.warning("⚠️ This user has few ratings. Results may not be reliable. Choose a user with 100+ ratings!")
+            elif user_ratings_count > 200:
+                st.success("✅ Great choice! This user has many ratings for reliable evaluation.")
+        else:
+            st.error(f"❌ User {test_user} not found in dataset!")
+    
+    with col_k:
+        k_value = st.slider(
+            "🎯 Top-K recommendations", 
+            min_value=5, 
+            max_value=20, 
+            value=10,
+            key="eval_k",
+            help="Number of recommendations to evaluate. K=10 gives the best balance of precision and recall."
+        )
+        
+        # Explain current K value
+        if k_value <= 8:
+            st.caption("⚡ **High precision mode** - Fewer but more accurate recommendations")
+        elif k_value <= 15:
+            st.caption("⚖️ **Balanced mode** - Best trade-off between accuracy and coverage")
+        else:
+            st.caption("🔍 **High recall mode** - Finds more relevant movies but may include less accurate ones")
+    
+    with col_info:
+        st.metric(
+            "📊 Evaluation Scope",
+            f"Top-{k_value}",
+            help=f"Testing how well algorithms perform when recommending {k_value} movies"
+        )
+    
+    # ============================================
+    # RUN EVALUATION BUTTON
+    # ============================================
+    if st.button("🚀 Run Evaluation", type="primary", key="eval_btn", use_container_width=True):
+        
+        # Check if user exists
+        if len(data[data["userId"] == test_user]) == 0:
+            st.error(f"❌ User {test_user} does not exist in the dataset! Please select a valid User ID between {min_user} and {max_user}.")
+        else:
+            with st.spinner(f"Calculating metrics for User {test_user} with Top-{k_value} recommendations..."):
+                
+                # Get results for all three algorithms
+                algorithms = {
+                    "Collaborative Filtering": "collaborative",
+                    "Content-Based": "content", 
+                    "Hybrid": "hybrid"
+                }
+                
+                comparison_data = []
+                for algo_name, algo_key in algorithms.items():
+                    result = evaluate_recommendations(test_user, algorithm_type=algo_key, top_n=k_value)
+                    if "error" not in result:
+                        comparison_data.append({
+                            "Algorithm": algo_name,
+                            "Precision": result["precision"],
+                            "Recall": result["recall"],
+                            "F1 Score": result["f1"]
+                        })
+                
+                if comparison_data:
+                    # Display results table
+                    st.subheader(f"📊 Algorithm Performance Comparison for User {test_user} (Top-{k_value})")
+                    df_results = pd.DataFrame(comparison_data)
+                    st.dataframe(df_results, use_container_width=True)
+                    
+                    # ============================================
+                    # FIND AND HIGHLIGHT THE BEST ALGORITHM
+                    # ============================================
+                    
+                    # Find best algorithm by F1 Score
+                    best_algo_row = df_results.loc[df_results["F1 Score"].idxmax()]
+                    best_algo_name = best_algo_row["Algorithm"]
+                    best_f1 = best_algo_row["F1 Score"]
+                    best_precision = best_algo_row["Precision"]
+                    best_recall = best_algo_row["Recall"]
+                    
+                    # Display prominent winner message
+                    st.success(f"🏆 **{best_algo_name} is the BEST performing algorithm for User {test_user} with Top-{k_value} recommendations!**")
+                    
+                    # Create metrics row for the winner
+                    col_w1, col_w2, col_w3 = st.columns(3)
+                    with col_w1:
+                        st.metric("🎯 Precision", f"{best_precision:.4f}", help="Accuracy of recommendations")
+                    with col_w2:
+                        st.metric("📚 Recall", f"{best_recall:.4f}", help="Coverage of relevant movies")
+                    with col_w3:
+                        st.metric("⭐ F1 Score", f"{best_f1:.4f}", help="Balance of precision and recall (most important)")
+                    
+                    # Explanation of why this algorithm is best
+                    with st.expander("📖 Why is this algorithm the best?", expanded=True):
+                        st.markdown(f"""
+                        ### 🎯 **{best_algo_name}** outperforms the other algorithms because:
+                        
+                        1. **Highest F1 Score ({best_f1:.4f})** - This is the most important metric as it balances:
+                           - **Precision** ({best_precision:.4f}): {best_precision*100:.1f}% of recommended movies are relevant
+                           - **Recall** ({best_recall:.4f}): Found {best_recall*100:.1f}% of all relevant movies
+                        
+                        2. **Comparison with other algorithms:**
+                        """)
+                        
+                        # Show comparison table
+                        for _, row in df_results.iterrows():
+                            if row["Algorithm"] != best_algo_name:
+                                diff_f1 = best_f1 - row["F1 Score"]
+                                if diff_f1 > 0:
+                                    st.markdown(f"- **{row['Algorithm']}** has **{diff_f1:.4f} lower F1 Score** than {best_algo_name}")
+                                else:
+                                    st.markdown(f"- **{row['Algorithm']}** performs similarly to {best_algo_name}")
+                        
+                        st.markdown(f"""
+                        ### 💡 Recommendation:
+                        **Use the *{best_algo_name}* algorithm** in the **Discover tab** for the best movie recommendations tailored to your mood!
+                        
+                        ---
+                        **How Top-{k_value} affects this result:**
+                        - With K={k_value}, we're evaluating {k_value} recommendations per algorithm
+                        - This K value is {'optimized for balance' if 8 <= k_value <= 12 else 'focused on ' + ('precision' if k_value < 8 else 'recall')}
+                        """)
+                    
+                    # Show runner-up comparison
+                    if len(df_results) > 1:
+                        with st.expander("🏅 Full Algorithm Ranking"):
+                            # Sort by F1 Score descending
+                            ranked_df = df_results.sort_values("F1 Score", ascending=False).reset_index(drop=True)
+                            ranked_df.index = ranked_df.index + 1
+                            ranked_df.columns = ["Algorithm", "Precision", "Recall", "F1 Score"]
+                            
+                            # Add medal emojis
+                            medal_map = {1: "🥇 ", 2: "🥈 ", 3: "🥉 "}
+                            ranked_df["Rank"] = [medal_map.get(i, f"{i}. ") for i in ranked_df.index]
+                            ranked_df["Algorithm"] = ranked_df["Rank"] + ranked_df["Algorithm"]
+                            
+                            st.dataframe(ranked_df[["Algorithm", "Precision", "Recall", "F1 Score"]], use_container_width=True)
+                            
+                            st.markdown("""
+                            **Understanding the ranking:**
+                            - **🥇 1st Place**: Best overall performance
+                            - Higher F1 Score = Better recommendation quality
+                            - F1 Score combines both Precision and Recall
+                            """)
+                    
+                    # Divider before RMSE
+                    st.divider()
+                    
+                    # ============================================
+                    # RMSE SECTION
+                    # ============================================
+                    st.subheader("📉 Rating Prediction Accuracy (RMSE)")
+                    st.markdown("**What is RMSE?** Root Mean Square Error - measures how accurately the system predicts ratings. **Lower = Better**")
+                    
+                    rmse_result = calculate_rmse()
+                    
+                    col_rmse1, col_rmse2, col_rmse3 = st.columns(3)
+                    with col_rmse1:
+                        st.metric(
+                            label="Root Mean Square Error (RMSE)", 
+                            value=rmse_result["rmse"],
+                            delta=None,
+                            help="Lower is better. Measures how accurately the system predicts ratings."
+                        )
+                    with col_rmse2:
+                        st.metric(
+                            label="Global Average Rating",
+                            value=round(rmse_result["global_avg_rating"], 2),
+                            help="Average rating across all movies in the dataset"
+                        )
+                    with col_rmse3:
+                        st.metric(
+                            label="Total Predictions",
+                            value=rmse_result["total_predictions"],
+                            help="Number of ratings used for RMSE calculation"
+                        )
+                    
+                    # RMSE interpretation
+                    if rmse_result["rmse"] < 0.8:
+                        st.success(f"✅ **Excellent!** RMSE of {rmse_result['rmse']} indicates very accurate rating predictions.")
+                    elif rmse_result["rmse"] < 1.0:
+                        st.info(f"👍 **Good!** RMSE of {rmse_result['rmse']} indicates reasonably accurate predictions.")
+                    else:
+                        st.warning(f"⚠️ RMSE of {rmse_result['rmse']} suggests room for improvement in rating predictions.")
+                    
+                    # ============================================
+                    # FINAL CONCLUSION
+                    # ============================================
+                    st.divider()
+                    
+                    # Test different K values suggestion
+                    with st.expander("🔬 Try Different K Values", expanded=False):
+                        st.markdown(f"""
+                        ### How K={k_value} compares to other values:
+                        
+                        You can rerun this evaluation with different K values to see how performance changes:
+                        
+                        | K Value | What it tests | Best for |
+                        |---------|---------------|----------|
+                        | K=5 | High precision | When you want only the very best matches |
+                        | K=10 | Balanced | General use (recommended) |
+                        | K=15 | Balanced recall | When you want more options |
+                        | K=20 | High recall | When you want to discover many movies |
+                        
+                        **Try changing the Top-K slider above and run evaluation again!**
+                        """)
+                    
+                    st.info(f"""
+                    **📌 Final Conclusion for User {test_user} with Top-{k_value}:**
+                    
+                    Based on the evaluation results, the **{best_algo_name}** algorithm achieves the highest 
+                    F1 Score (**{best_f1:.4f}**), making it the most effective recommendation strategy for this user.
+                    
+                    **Recommendation:** Use the **{best_algo_name}** algorithm in the Discover tab for the best 
+                    personalized mood-based movie recommendations!
+                    """)
+                    
+                else:
+                    st.warning(f"No evaluation results could be generated for User {test_user}. Try a different User ID with more ratings.")
+    
+    # ============================================
+    # ASSIGNMENT INSTRUCTIONS
+    # ============================================
+    with st.expander("📖 How to Complete the Evaluation for Your Assignment"):
+        st.markdown("""
+        ### Instructions for collecting user feedback:
+        
+        1. **Share your app** with 5-10 friends/classmates
+        2. **Ask them to**:
+           - Test all 3 algorithms (Collaborative, Content-Based, Hybrid)
+           - Try different moods (Happy, Sad, Excited, etc.)
+           - Try different K values (5, 10, 15, 20)
+           - Click the "Take Survey" button above
+           - Complete the Google Form honestly
+        3. **Collect responses** from Google Forms:
+           - Go to your Google Form
+           - Click "Responses" tab
+           - Click "Link to Sheets" (creates Excel file)
+           - Export to CSV/Excel
+        4. **Include in your documentation**:
+           - Screenshot of the Google Form
+           - Summary table of responses
+           - Average satisfaction scores
+           - Chart/Graph of results
+        
+        ### For the Algorithm Comparison:
+        - The evaluation above automatically compares all three algorithms
+        - **F1 Score** is the best metric for overall comparison
+        - The system will highlight which algorithm performed best
+        - Try different User IDs and K values to see how results change
+        - Include these results in your assignment report
+        
+        ### Understanding Your Results:
+        
+        **Which algorithm is best?**
+        - Look at the **F1 Score** column in the results table
+        - Higher F1 Score = Better algorithm
+        - The system will automatically highlight the winner
+        
+        **What if different users prefer different algorithms?**
+        - That's normal! Different users have different tastes
+        - Report the average across multiple users
+        - The Hybrid algorithm often performs best overall
+        
+        **What K value should I use?**
+        - K=10 is standard for most evaluations
+        - Test with K=5, 10, 15, 20 to see patterns
+        - Report results for K=10 in your main assignment
+        """)
