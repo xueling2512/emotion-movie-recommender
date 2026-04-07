@@ -15,84 +15,100 @@ from poster import fetch_poster
 # 1. Page Config must be FIRST
 st.set_page_config(page_title="Emotion Movie Recommender", layout="wide")
 
-# 2. CSS for FIXED SIZE CARDS - Using reliable class names
+# 2. CSS for COMPACT POSTERS - Fits 5 columns at 100% zoom
+# 2. CSS for POSTERS - Balanced size
 st.markdown("""
     <style>
-    /* Fixed size for each movie card */
+    /* Main app container - reduce padding */
+    .main > div {
+        padding-left: 0.5rem !important;
+        padding-right: 0.5rem !important;
+    }
+    
+    /* Movie card - balanced size */
     .movie-card {
-        height: 450px !important;
+        height: 420px !important;
         width: 100% !important;
         display: flex !important;
         flex-direction: column !important;
         background-color: #262730;
-        border-radius: 10px;
-        padding: 10px;
-        margin-bottom: 10px;
+        border-radius: 8px;
+        padding: 8px !important;
+        margin-bottom: 8px !important;
         border: 1px solid #444;
         overflow: hidden !important;
     }
     
-    /* Fixed size for poster image */
+    /* Poster size - visible but fits */
     .movie-poster {
         height: 280px !important;
         width: 100% !important;
         object-fit: cover !important;
-        border-radius: 8px;
-        margin-bottom: 8px;
+        border-radius: 6px;
+        margin-bottom: 8px !important;
     }
     
-    /* Fixed height for title (2 lines max) */
+    /* Title styling - readable */
     .movie-title {
         font-weight: bold;
-        font-size: 0.85rem;
-        height: 40px !important;
+        font-size: 0.85rem !important;
+        height: 45px !important;
         overflow: hidden;
         display: -webkit-box;
         -webkit-line-clamp: 2;
         -webkit-box-orient: vertical;
         text-align: center;
-        margin-bottom: 5px;
+        margin-bottom: 5px !important;
         line-height: 1.3;
     }
     
-    /* Fixed height for rating/genre */
+    /* Info text - readable */
     .movie-info {
-        font-size: 0.7rem;
+        font-size: 0.7rem !important;
         text-align: center;
         height: 50px !important;
         overflow: hidden;
         color: #aaa;
+        line-height: 1.4;
     }
     
-    /* Force all columns to have same height parent */
+    /* Reduce gap between columns */
+    .row-widget.stHorizontal {
+        gap: 0.3rem !important;
+    }
+    
+    /* Force columns to be equal width */
     .stColumn {
-        display: flex !important;
-        flex-direction: column !important;
-    }
-    
-    /* Make containers inside columns stretch properly */
-    .stColumn > div {
-        height: 100% !important;
-        display: flex !important;
-        flex-direction: column !important;
+        flex: 1 !important;
+        min-width: 0 !important;
+        padding-left: 0.2rem !important;
+        padding-right: 0.2rem !important;
     }
     </style>
 """, unsafe_allow_html=True)
 
 st.title("🎬 Emotion-Based Movie Recommender")
 
-# Helper function to display a movie card (ensures same size every time)
+# Helper function to display a movie card
 def display_movie_card(poster_url, title, rating, genres):
     """Display a single movie card with fixed dimensions"""
-    # Truncate genres to prevent overflow
-    if len(genres) > 40:
-        genres = genres[:37] + "..."
+    # Aggressive truncation for small cards
+    if len(genres) > 35:
+        genres = genres[:32] + "..."
+    if len(title) > 28:
+        title = title[:25] + "..."
+    
+    # Handle missing/empty rating
+    if rating == "N/A" or pd.isna(rating):
+        rating = "N/A"
+    else:
+        rating = f"{float(rating):.1f}"
     
     card_html = f"""
     <div class="movie-card">
         <img class="movie-poster" src="{poster_url}" onerror="this.src='https://via.placeholder.com/500x750?text=No+Poster'">
         <div class="movie-title">{title}</div>
-        <div class="movie-info">⭐ {rating} | 🎭 {genres}</div>
+        <div class="movie-info">⭐ {rating}<br>🎭 {genres}</div>
     </div>
     """
     st.markdown(card_html, unsafe_allow_html=True)
@@ -134,7 +150,7 @@ with tab1:
                 if recs:
                     st.subheader(f"Recommended for You ({len(recs)} movies)")
                     
-                    # Display in rows of 5
+                    # Display in rows of 5 columns
                     for i in range(0, len(recs), 5):
                         cols = st.columns(5)
                         for j in range(5):
@@ -206,21 +222,27 @@ with tab2:
             if not display_list.empty:
                 st.markdown(f"### Showing {len(display_list)} results")
                 
-                # Display in rows of 5
-                movies_list = display_list.to_dict('records')
+                movies_list = display_list.to_dict('records')  # ✅ Now inside the if block
+                # Display in rows of 5 columns
                 for i in range(0, len(movies_list), 5):
                     cols = st.columns(5)
                     for j in range(5):
                         idx = i + j
                         if idx < len(movies_list):
                             row = movies_list[idx]
-                            poster = fetch_poster(row.get('tmdbId', None))
-                            display_movie_card(
-                                poster_url=poster,
-                                title=row['title'],
-                                rating=round(row['rating'], 1),
-                                genres=row['genres'].replace('|', ', ')
-                            )
+                            # Make sure tmdbId exists and is valid
+                            tmdb_id = row.get('tmdbId', None)
+                            if tmdb_id and pd.notna(tmdb_id):
+                                poster = fetch_poster(tmdb_id)
+                            else:
+                                poster = "https://via.placeholder.com/500x750?text=No+Poster"
+                            with cols[j]:
+                                display_movie_card(
+                                    poster_url=poster,
+                                    title=row['title'],
+                                    rating=round(row['rating'], 1),
+                                    genres=row['genres'].replace('|', ', ')
+                                )
             else:
                 st.warning("No movies found matching your search and filter criteria.")
 
@@ -231,9 +253,9 @@ with tab3:
     st.subheader("Top Rated by the Community")
     popular_data = get_popular_movies()
     
-    # Convert to list for iteration
     popular_list = list(popular_data.items())
-    
+
+    # Display in rows of 5 columns
     for i in range(0, len(popular_list), 5):
         cols = st.columns(5)
         for j in range(5):
@@ -242,9 +264,10 @@ with tab3:
                 title, rating = popular_list[idx]
                 details = get_movie_details(title)
                 poster = fetch_poster(details['tmdbId'])
-                display_movie_card(
-                    poster_url=poster,
-                    title=title,
-                    rating=round(rating, 2),
-                    genres=details['genres'].replace('|', ', ')
-                )
+                with cols[j]:  # ✅ IMPORTANT: This was missing!
+                    display_movie_card(
+                        poster_url=poster,
+                        title=title,
+                        rating=round(rating, 2),
+                        genres=details['genres'].replace('|', ', ')
+                    )
