@@ -7,7 +7,7 @@ from recommender import (
     movies,
     get_popular_movies,
     get_movie_details,
-    global_browse_movies, # Use this for independent filtering
+    global_browse_movies,
     data
 )
 from poster import fetch_poster
@@ -46,12 +46,11 @@ st.title("🎬 Emotion-Based Movie Recommender")
 # --- TABS ---
 tab1, tab2, tab3 = st.tabs(["✨ Discover", "📂 Browse Library", "🔥 Trending"])
 
-
 # --- TAB 1: DISCOVER (AI RECOMMENDATIONS) ---
 with tab1:
     st.subheader("Personalized for your Mood")
-# Create 3 columns for a single row layout
-    # You can adjust the numbers (2, 2, 4) to change the width of each box
+    
+    # Create 3 columns for a single row layout
     col_mood, col_algo, col_movie = st.columns([2, 2, 4]) 
 
     with col_mood:
@@ -63,24 +62,25 @@ with tab1:
     with col_movie:
         movie_title = st.selectbox("Choose a movie you like:", movies["title"].values, key="tab1_movie_select")
     
-    # 🆕 Add a specific slider for recommendations
+    # Slider for number of recommendations
     num_recs = st.slider("Number of Recommendations", 5, 50, 10, key="tab1_res")
 
     if st.button("Generate Recommendations", type="primary"):
         with st.spinner('AI is thinking...'):
             try:
-                # Get raw AI recommendations
+                # Get raw AI recommendations - FIXED: passing top_n parameter!
                 if algorithm == "Collaborative Filtering":
-                    recs = recommend_movies(movie_title, emotion)
+                    recs = recommend_movies(movie_title, emotion, top_n=num_recs)
                 elif algorithm == "Content-Based":
-                    recs = recommend_movies_cb(movie_title, emotion)
+                    recs = recommend_movies_cb(movie_title, emotion, top_n=num_recs)
                 else:
-                    recs = recommend_movies_hybrid(movie_title, emotion)
+                    recs = recommend_movies_hybrid(movie_title, emotion, top_n=num_recs)
 
+                # Safety slice (in case functions return more than requested)
                 recs = recs[:num_recs]
 
                 if recs:
-                    st.subheader("Recommended for You")
+                    st.subheader(f"Recommended for You ({len(recs)} movies)")
                     cols = st.columns(5)
                     for i, movie in enumerate(recs):
                         details = get_movie_details(movie)
@@ -117,17 +117,15 @@ with tab2:
         min_rating = st.slider("Min Rating", 0.0, 5.0, 0.0, 0.1, key="br_rate")
 
     with c4:
-        # Added "Year" to the sorting options
         sort_choice = st.selectbox("Sort By", ["Rating", "A-Z", "Year"], key="br_sort")
 
     with c5:
-        # NEW: Sort Direction
         sort_order = st.selectbox("Order", ["Descending", "Ascending"], key="br_order")
 
     with c6:
         num_results = st.number_input("Limit", min_value=1, max_value=100, value=10, key="br_limit")
 
-# 3. Apply Button
+    # Apply Button
     if st.button("Apply Library Filters", type="primary", use_container_width=True):
         with st.spinner('Filtering results...'):
             filtered_df = global_browse_movies(
