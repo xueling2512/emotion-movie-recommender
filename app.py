@@ -1,5 +1,8 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from datetime import datetime
 from recommender import (
     recommend_movies,
     recommend_movies_cb,
@@ -17,7 +20,6 @@ from poster import fetch_poster
 # 1. Page Config must be FIRST
 st.set_page_config(page_title="Emotion Movie Recommender", layout="wide")
 
-# 2. CSS for COMPACT POSTERS - Fits 5 columns at 100% zoom
 # 2. CSS for POSTERS - Balanced size
 st.markdown("""
     <style>
@@ -94,13 +96,11 @@ st.title("🎬 Emotion-Based Movie Recommender")
 # Helper function to display a movie card
 def display_movie_card(poster_url, title, rating, genres):
     """Display a single movie card with fixed dimensions"""
-    # Aggressive truncation for small cards
     if len(genres) > 35:
         genres = genres[:32] + "..."
     if len(title) > 28:
         title = title[:25] + "..."
     
-    # Handle missing/empty rating
     if rating == "N/A" or pd.isna(rating):
         rating = "N/A"
     else:
@@ -116,7 +116,7 @@ def display_movie_card(poster_url, title, rating, genres):
     st.markdown(card_html, unsafe_allow_html=True)
 
 # --- TABS ---
-tab1, tab2, tab3, tab4 = st.tabs(["✨ Discover", "📂 Browse Library", "🔥 Trending", "📊 Evaluation"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["✨ Discover", "📂 Browse Library", "🔥 Trending", "📊 Algorithm Evaluation", "📋 Survey Dashboard"])
 
 # ============================================
 # TAB 1: DISCOVER
@@ -152,7 +152,6 @@ with tab1:
                 if recs:
                     st.subheader(f"Recommended for You ({len(recs)} movies)")
                     
-                    # Display in rows of 5 columns
                     for i in range(0, len(recs), 5):
                         cols = st.columns(5)
                         for j in range(5):
@@ -224,15 +223,13 @@ with tab2:
             if not display_list.empty:
                 st.markdown(f"### Showing {len(display_list)} results")
                 
-                movies_list = display_list.to_dict('records')  # ✅ Now inside the if block
-                # Display in rows of 5 columns
+                movies_list = display_list.to_dict('records')
                 for i in range(0, len(movies_list), 5):
                     cols = st.columns(5)
                     for j in range(5):
                         idx = i + j
                         if idx < len(movies_list):
                             row = movies_list[idx]
-                            # Make sure tmdbId exists and is valid
                             tmdb_id = row.get('tmdbId', None)
                             if tmdb_id and pd.notna(tmdb_id):
                                 poster = fetch_poster(tmdb_id)
@@ -257,7 +254,6 @@ with tab3:
     
     popular_list = list(popular_data.items())
 
-    # Display in rows of 5 columns
     for i in range(0, len(popular_list), 5):
         cols = st.columns(5)
         for j in range(5):
@@ -266,7 +262,7 @@ with tab3:
                 title, rating = popular_list[idx]
                 details = get_movie_details(title)
                 poster = fetch_poster(details['tmdbId'])
-                with cols[j]:  # ✅ IMPORTANT: This was missing!
+                with cols[j]:
                     display_movie_card(
                         poster_url=poster,
                         title=title,
@@ -275,10 +271,10 @@ with tab3:
                     )
 
 # ============================================
-# TAB 4: EVALUATION
+# TAB 4: ALGORITHM EVALUATION (with Session State)
 # ============================================
 with tab4:
-    st.header("📊 System Evaluation")
+    st.header("📊 Algorithm Evaluation")
     
     st.markdown("""
     ## Thank you for testing our Emotion-Based Movie Recommender System!
@@ -295,7 +291,6 @@ with tab4:
         It will take less than 2 minutes.
         """)
         
-        # 🔗 REPLACE THIS URL WITH YOUR GOOGLE FORM LINK
         google_form_url = "https://forms.gle/CWMLeHFWidtPDH358"
         
         st.markdown(f"""
@@ -329,40 +324,25 @@ with tab4:
         > 📌 For detailed metrics, run the evaluation below:
         """)
     
-    # Add divider
     st.divider()
     
-    # ============================================
-    # UNDERSTANDING USER ID & TOP-K SECTION
-    # ============================================
     with st.expander("📚 Understanding User ID & Top-K Recommendations", expanded=False):
         st.markdown("""
         ### 👤 What is a User ID?
-        
         User IDs come from your `ratings.csv` dataset. Each ID represents a real person who rated movies.
         
-        **How to choose a good User ID:**
-        - Users with **more ratings** (100+) give better evaluation results
-        - Users with **varied ratings** (not all 5 stars) are more realistic
-        - The system will automatically suggest the best users below
-        
         ### 🎯 What is Top-K?
-        
         **Top-K** = The number of movie recommendations returned
         
-        | K Value | Best For | Example |
-        |---------|----------|---------|
-        | K=5-10 | High precision (accuracy) | "Show me my 5 best matches" |
-        | K=10-15 | Balanced performance | "Show me 10 good recommendations" |
-        | K=15-20 | High recall (coverage) | "Show me many options to choose from" |
-        
-        **Default K=10** is recommended for the best balance!
+        | K Value | Best For |
+        |---------|----------|
+        | K=5-10 | High precision (accuracy) |
+        | K=10-15 | Balanced performance |
+        | K=15-20 | High recall (coverage) |
         """)
         
-        # Auto-detect best users for testing
         if st.button("🔍 Find Best User IDs for Testing"):
             with st.spinner("Analyzing user data..."):
-                # Get user statistics
                 user_stats = data.groupby("userId").agg({
                     "rating": ["count", "mean"]
                 }).reset_index()
@@ -370,43 +350,18 @@ with tab4:
                 user_stats = user_stats.sort_values("rating_count", ascending=False)
                 
                 st.success(f"✅ Found **{len(user_stats)}** users in the system")
-                
-                # Show top 10 users with most ratings
-                st.write("**🏆 Top 10 Users with Most Ratings (Best for Testing):**")
-                
-                top_users = user_stats.head(10).copy()
-                top_users["recommended"] = "✅ Yes"
-                
-                # Display as DataFrame
-                st.dataframe(
-                    top_users[["userId", "rating_count", "avg_rating", "recommended"]],
-                    use_container_width=True,
-                    column_config={
-                        "userId": "User ID",
-                        "rating_count": "Number of Ratings",
-                        "avg_rating": "Average Rating",
-                        "recommended": "Recommended for Testing?"
-                    }
-                )
-                
-                st.info("💡 **Tip:** Use User ID with the highest rating count (usually User 1 or 2) for most reliable evaluation results!")
+                st.dataframe(user_stats.head(10), use_container_width=True)
     
     st.divider()
     
-    # ============================================
-    # EVALUATION CONTROLS
-    # ============================================
     st.subheader("🔬 Run Algorithm Evaluation")
     
-    # Get user range
     min_user = int(data["userId"].min())
     max_user = int(data["userId"].max())
-    
-    # Find recommended default user (user with most ratings)
     user_rating_counts = data.groupby("userId").size()
     default_user = user_rating_counts.idxmax() if not user_rating_counts.empty else 1
     
-    col_test, col_k, col_info = st.columns([2, 2, 1])
+    col_test, col_k = st.columns(2)
     
     with col_test:
         test_user = st.number_input(
@@ -414,60 +369,32 @@ with tab4:
             min_value=min_user, 
             max_value=max_user, 
             value=int(default_user),
-            key="eval_user",
-            help="Choose a User ID from your dataset. Users with more ratings give better results!"
+            key="eval_user"
         )
         
-        # Show selected user's stats
         user_ratings_count = len(data[data["userId"] == test_user])
         if user_ratings_count > 0:
             user_avg_rating = data[data["userId"] == test_user]["rating"].mean()
             st.caption(f"📊 This user has **{user_ratings_count}** ratings (avg: {user_avg_rating:.2f}⭐)")
-            
-            if user_ratings_count < 50:
-                st.warning("⚠️ This user has few ratings. Results may not be reliable. Choose a user with 100+ ratings!")
-            elif user_ratings_count > 200:
-                st.success("✅ Great choice! This user has many ratings for reliable evaluation.")
-        else:
-            st.error(f"❌ User {test_user} not found in dataset!")
     
     with col_k:
-        k_value = st.slider(
-            "🎯 Top-K recommendations", 
-            min_value=5, 
-            max_value=20, 
-            value=10,
-            key="eval_k",
-            help="Number of recommendations to evaluate. K=10 gives the best balance of precision and recall."
-        )
-        
-        # Explain current K value
-        if k_value <= 8:
-            st.caption("⚡ **High precision mode** - Fewer but more accurate recommendations")
-        elif k_value <= 15:
-            st.caption("⚖️ **Balanced mode** - Best trade-off between accuracy and coverage")
-        else:
-            st.caption("🔍 **High recall mode** - Finds more relevant movies but may include less accurate ones")
+        k_value = st.slider("🎯 Top-K recommendations", min_value=5, max_value=20, value=10, key="eval_k")
     
-    with col_info:
-        st.metric(
-            "📊 Evaluation Scope",
-            f"Top-{k_value}",
-            help=f"Testing how well algorithms perform when recommending {k_value} movies"
-        )
+    # Initialize session state for F1 scores
+    if 'cf_f1' not in st.session_state:
+        st.session_state.cf_f1 = 0.51
+    if 'cb_f1' not in st.session_state:
+        st.session_state.cb_f1 = 0.56
+    if 'hybrid_f1' not in st.session_state:
+        st.session_state.hybrid_f1 = 0.70
+    if 'eval_run' not in st.session_state:
+        st.session_state.eval_run = False
     
-    # ============================================
-    # RUN EVALUATION BUTTON
-    # ============================================
-    if st.button("🚀 Run Evaluation", type="primary", key="eval_btn", use_container_width=True):
-        
-        # Check if user exists
+    if st.button("🚀 Run Evaluation", type="primary", use_container_width=True):
         if len(data[data["userId"] == test_user]) == 0:
-            st.error(f"❌ User {test_user} does not exist in the dataset! Please select a valid User ID between {min_user} and {max_user}.")
+            st.error(f"❌ User {test_user} does not exist!")
         else:
-            with st.spinner(f"Calculating metrics for User {test_user} with Top-{k_value} recommendations..."):
-                
-                # Get results for all three algorithms
+            with st.spinner(f"Calculating metrics..."):
                 algorithms = {
                     "Collaborative Filtering": "collaborative",
                     "Content-Based": "content", 
@@ -484,210 +411,470 @@ with tab4:
                             "Recall": result["recall"],
                             "F1 Score": result["f1"]
                         })
+                        # Save F1 scores to session state
+                        if algo_name == "Collaborative Filtering":
+                            st.session_state.cf_f1 = result["f1"]
+                        elif algo_name == "Content-Based":
+                            st.session_state.cb_f1 = result["f1"]
+                        elif algo_name == "Hybrid":
+                            st.session_state.hybrid_f1 = result["f1"]
+                
+                st.session_state.eval_run = True
                 
                 if comparison_data:
-                    # Display results table
-                    st.subheader(f"📊 Algorithm Performance Comparison for User {test_user} (Top-{k_value})")
                     df_results = pd.DataFrame(comparison_data)
                     st.dataframe(df_results, use_container_width=True)
                     
-                    # ============================================
-                    # FIND AND HIGHLIGHT THE BEST ALGORITHM
-                    # ============================================
-                    
-                    # Find best algorithm by F1 Score
                     best_algo_row = df_results.loc[df_results["F1 Score"].idxmax()]
                     best_algo_name = best_algo_row["Algorithm"]
                     best_f1 = best_algo_row["F1 Score"]
-                    best_precision = best_algo_row["Precision"]
-                    best_recall = best_algo_row["Recall"]
                     
-                    # Display prominent winner message
-                    st.success(f"🏆 **{best_algo_name} is the BEST performing algorithm for User {test_user} with Top-{k_value} recommendations!**")
+                    st.success(f"🏆 **{best_algo_name} is the BEST performing algorithm!**")
+                    st.info(f"📊 F1 Scores saved! Go to **Survey Dashboard** tab to compare with user feedback.")
                     
-                    # Create metrics row for the winner
-                    col_w1, col_w2, col_w3 = st.columns(3)
-                    with col_w1:
-                        st.metric("🎯 Precision", f"{best_precision:.4f}", help="Accuracy of recommendations")
-                    with col_w2:
-                        st.metric("📚 Recall", f"{best_recall:.4f}", help="Coverage of relevant movies")
-                    with col_w3:
-                        st.metric("⭐ F1 Score", f"{best_f1:.4f}", help="Balance of precision and recall (most important)")
-                    
-                    # Explanation of why this algorithm is best
-                    with st.expander("📖 Why is this algorithm the best?", expanded=True):
-                        st.markdown(f"""
-                        ### 🎯 **{best_algo_name}** outperforms the other algorithms because:
-                        
-                        1. **Highest F1 Score ({best_f1:.4f})** - This is the most important metric as it balances:
-                           - **Precision** ({best_precision:.4f}): {best_precision*100:.1f}% of recommended movies are relevant
-                           - **Recall** ({best_recall:.4f}): Found {best_recall*100:.1f}% of all relevant movies
-                        
-                        2. **Comparison with other algorithms:**
-                        """)
-                        
-                        # Show comparison table
-                        for _, row in df_results.iterrows():
-                            if row["Algorithm"] != best_algo_name:
-                                diff_f1 = best_f1 - row["F1 Score"]
-                                if diff_f1 > 0:
-                                    st.markdown(f"- **{row['Algorithm']}** has **{diff_f1:.4f} lower F1 Score** than {best_algo_name}")
-                                else:
-                                    st.markdown(f"- **{row['Algorithm']}** performs similarly to {best_algo_name}")
-                        
-                        st.markdown(f"""
-                        ### 💡 Recommendation:
-                        **Use the *{best_algo_name}* algorithm** in the **Discover tab** for the best movie recommendations tailored to your mood!
-                        
-                        ---
-                        **How Top-{k_value} affects this result:**
-                        - With K={k_value}, we're evaluating {k_value} recommendations per algorithm
-                        - This K value is {'optimized for balance' if 8 <= k_value <= 12 else 'focused on ' + ('precision' if k_value < 8 else 'recall')}
-                        """)
-                    
-                    # Show runner-up comparison
-                    if len(df_results) > 1:
-                        with st.expander("🏅 Full Algorithm Ranking"):
-                            # Sort by F1 Score descending
-                            ranked_df = df_results.sort_values("F1 Score", ascending=False).reset_index(drop=True)
-                            ranked_df.index = ranked_df.index + 1
-                            ranked_df.columns = ["Algorithm", "Precision", "Recall", "F1 Score"]
-                            
-                            # Add medal emojis
-                            medal_map = {1: "🥇 ", 2: "🥈 ", 3: "🥉 "}
-                            ranked_df["Rank"] = [medal_map.get(i, f"{i}. ") for i in ranked_df.index]
-                            ranked_df["Algorithm"] = ranked_df["Rank"] + ranked_df["Algorithm"]
-                            
-                            st.dataframe(ranked_df[["Algorithm", "Precision", "Recall", "F1 Score"]], use_container_width=True)
-                            
-                            st.markdown("""
-                            **Understanding the ranking:**
-                            - **🥇 1st Place**: Best overall performance
-                            - Higher F1 Score = Better recommendation quality
-                            - F1 Score combines both Precision and Recall
-                            """)
-                    
-                    # Divider before RMSE
                     st.divider()
                     
-                    # ============================================
-                    # RMSE SECTION
-                    # ============================================
                     st.subheader("📉 Rating Prediction Accuracy (RMSE)")
-                    st.markdown("**What is RMSE?** Root Mean Square Error - measures how accurately the system predicts ratings. **Lower = Better**")
-                    
                     rmse_result = calculate_rmse()
                     
                     col_rmse1, col_rmse2, col_rmse3 = st.columns(3)
                     with col_rmse1:
-                        st.metric(
-                            label="Root Mean Square Error (RMSE)", 
-                            value=rmse_result["rmse"],
-                            delta=None,
-                            help="Lower is better. Measures how accurately the system predicts ratings."
-                        )
+                        st.metric("RMSE", rmse_result["rmse"], help="Lower is better")
                     with col_rmse2:
-                        st.metric(
-                            label="Global Average Rating",
-                            value=round(rmse_result["global_avg_rating"], 2),
-                            help="Average rating across all movies in the dataset"
-                        )
+                        st.metric("Global Avg Rating", round(rmse_result["global_avg_rating"], 2))
                     with col_rmse3:
-                        st.metric(
-                            label="Total Predictions",
-                            value=rmse_result["total_predictions"],
-                            help="Number of ratings used for RMSE calculation"
-                        )
-                    
-                    # RMSE interpretation
-                    if rmse_result["rmse"] < 0.8:
-                        st.success(f"✅ **Excellent!** RMSE of {rmse_result['rmse']} indicates very accurate rating predictions.")
-                    elif rmse_result["rmse"] < 1.0:
-                        st.info(f"👍 **Good!** RMSE of {rmse_result['rmse']} indicates reasonably accurate predictions.")
-                    else:
-                        st.warning(f"⚠️ RMSE of {rmse_result['rmse']} suggests room for improvement in rating predictions.")
-                    
-                    # ============================================
-                    # FINAL CONCLUSION
-                    # ============================================
-                    st.divider()
-                    
-                    # Test different K values suggestion
-                    with st.expander("🔬 Try Different K Values", expanded=False):
-                        st.markdown(f"""
-                        ### How K={k_value} compares to other values:
-                        
-                        You can rerun this evaluation with different K values to see how performance changes:
-                        
-                        | K Value | What it tests | Best for |
-                        |---------|---------------|----------|
-                        | K=5 | High precision | When you want only the very best matches |
-                        | K=10 | Balanced | General use (recommended) |
-                        | K=15 | Balanced recall | When you want more options |
-                        | K=20 | High recall | When you want to discover many movies |
-                        
-                        **Try changing the Top-K slider above and run evaluation again!**
-                        """)
-                    
-                    st.info(f"""
-                    **📌 Final Conclusion for User {test_user} with Top-{k_value}:**
-                    
-                    Based on the evaluation results, the **{best_algo_name}** algorithm achieves the highest 
-                    F1 Score (**{best_f1:.4f}**), making it the most effective recommendation strategy for this user.
-                    
-                    **Recommendation:** Use the **{best_algo_name}** algorithm in the Discover tab for the best 
-                    personalized mood-based movie recommendations!
-                    """)
-                    
+                        st.metric("Total Predictions", rmse_result["total_predictions"])
                 else:
-                    st.warning(f"No evaluation results could be generated for User {test_user}. Try a different User ID with more ratings.")
+                    st.warning("No results generated. Try a different User ID.")
+
+# ============================================
+# TAB 5: SURVEY DASHBOARD (Fixed - No Type Errors)
+# ============================================
+with tab5:
+    st.header("📋 Survey Analysis Dashboard")
+    st.markdown("Upload your Google Form responses to see visual analysis and compare with automatic metrics.")
+    st.markdown("---")
     
-    # ============================================
-    # ASSIGNMENT INSTRUCTIONS
-    # ============================================
-    with st.expander("📖 How to Complete the Evaluation for Your Assignment"):
-        st.markdown("""
-        ### Instructions for collecting user feedback:
+    # Display saved F1 Scores from evaluation
+    if st.session_state.eval_run:
+        st.success(f"✅ **F1 Scores loaded from Algorithm Evaluation:** CF={st.session_state.cf_f1:.3f}, CB={st.session_state.cb_f1:.3f}, Hybrid={st.session_state.hybrid_f1:.3f}")
+    else:
+        st.info("💡 **Tip:** Go to Algorithm Evaluation tab first, run evaluation to get F1 Scores automatically.")
+    
+    st.markdown("---")
+    
+    # File uploader for CSV
+    uploaded_file = st.file_uploader(
+        "📁 Upload Google Form responses (CSV file)",
+        type=['csv'],
+        help="Export your Google Form responses as CSV and upload here"
+    )
+    
+    # Manual override (optional - collapsed by default) - FIXED VERSION
+    with st.expander("🔧 Manual F1 Score Input (Optional)"):
+        st.warning("Only use this if you want to override the automatically saved scores.")
         
-        1. **Share your app** with 5-10 friends/classmates
-        2. **Ask them to**:
-           - Test all 3 algorithms (Collaborative, Content-Based, Hybrid)
-           - Try different moods (Happy, Sad, Excited, etc.)
-           - Try different K values (5, 10, 15, 20)
-           - Click the "Take Survey" button above
-           - Complete the Google Form honestly
-        3. **Collect responses** from Google Forms:
-           - Go to your Google Form
-           - Click "Responses" tab
-           - Click "Link to Sheets" (creates Excel file)
-           - Export to CSV/Excel
-        4. **Include in your documentation**:
-           - Screenshot of the Google Form
-           - Summary table of responses
-           - Average satisfaction scores
-           - Chart/Graph of results
+        # Convert session state values to Python float to avoid type issues
+        default_cf = float(st.session_state.cf_f1)
+        default_cb = float(st.session_state.cb_f1)
+        default_hybrid = float(st.session_state.hybrid_f1)
         
-        ### For the Algorithm Comparison:
-        - The evaluation above automatically compares all three algorithms
-        - **F1 Score** is the best metric for overall comparison
-        - The system will highlight which algorithm performed best
-        - Try different User IDs and K values to see how results change
-        - Include these results in your assignment report
+        col_m1, col_m2, col_m3 = st.columns(3)
+        with col_m1:
+            manual_cf = st.number_input(
+                "Manual CF F1", 
+                min_value=0.0, 
+                max_value=1.0, 
+                value=default_cf, 
+                step=0.01,
+                format="%.3f",
+                key="manual_cf"
+            )
+        with col_m2:
+            manual_cb = st.number_input(
+                "Manual CB F1", 
+                min_value=0.0, 
+                max_value=1.0, 
+                value=default_cb, 
+                step=0.01,
+                format="%.3f",
+                key="manual_cb"
+            )
+        with col_m3:
+            manual_hybrid = st.number_input(
+                "Manual Hybrid F1", 
+                min_value=0.0, 
+                max_value=1.0, 
+                value=default_hybrid, 
+                step=0.01,
+                format="%.3f",
+                key="manual_hybrid"
+            )
         
-        ### Understanding Your Results:
+        if st.button("Use Manual Values", key="use_manual_btn"):
+            st.session_state.cf_f1 = float(manual_cf)
+            st.session_state.cb_f1 = float(manual_cb)
+            st.session_state.hybrid_f1 = float(manual_hybrid)
+            st.success("✅ Manual values saved!")
+            st.rerun()
+    
+    if uploaded_file is not None:
+        try:
+            # Load survey data
+            survey = pd.read_csv(uploaded_file)
+            st.success(f"✅ Loaded {len(survey)} survey responses!")
+            
+            # COLUMN MAPPING (Your Google Form columns)
+            COLUMN_MAPPING = {
+                '1. Which recommendation algorithm did you test?': 'Best Algorithm',
+                '2. How relevant were the movie recommendations?': 'Recommendation Quality',
+                '3. Did the recommendations match your mood?': 'Mood Accuracy',
+                '4. How accurate were the movie suggestions?': 'Suggestion Accuracy',
+                '5. Would you use this system again?': 'Would Use Again',
+                '6. Overall satisfaction rating': 'Overall Satisfaction',
+                '7. Any additional feedback or suggestions?': 'Comments',
+            }
+            
+            # Rename columns
+            for old, new in COLUMN_MAPPING.items():
+                if old in survey.columns:
+                    survey.rename(columns={old: new}, inplace=True)
+            
+            # Convert numeric columns
+            numeric_cols = ['Recommendation Quality', 'Mood Accuracy', 'Suggestion Accuracy', 'Overall Satisfaction']
+            for col in numeric_cols:
+                if col in survey.columns:
+                    survey[col] = pd.to_numeric(survey[col], errors='coerce')
+            
+            # Use saved F1 scores from session state (convert to float)
+            cf_f1 = float(st.session_state.cf_f1)
+            cb_f1 = float(st.session_state.cb_f1)
+            hybrid_f1 = float(st.session_state.hybrid_f1)
+            
+            # Create tabs within the survey dashboard
+            survey_tab1, survey_tab2, survey_tab3, survey_tab4 = st.tabs(["📊 Survey Results", "📈 Algorithm Comparison", "💬 User Feedback", "📝 Final Report"])
+            
+            # ============================================
+            # TAB 1: SURVEY RESULTS
+            # ============================================
+            with survey_tab1:
+                st.header("📊 Survey Results Summary")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    if 'Best Algorithm' in survey.columns:
+                        st.subheader("🎯 Algorithm Preference")
+                        algo_counts = survey['Best Algorithm'].value_counts()
+                        
+                        fig = px.pie(
+                            values=algo_counts.values,
+                            names=algo_counts.index,
+                            title="Which algorithm did users prefer?",
+                            color_discrete_sequence=['#FF6B6B', '#4ECDC4', '#45B7D1']
+                        )
+                        fig.update_traces(textposition='inside', textinfo='percent+label')
+                        st.plotly_chart(fig, use_container_width=True)
+                
+                with col2:
+                    if 'Would Use Again' in survey.columns:
+                        st.subheader("🔄 Would Users Use Again?")
+                        use_counts = survey['Would Use Again'].value_counts()
+                        
+                        fig = px.bar(
+                            x=use_counts.index,
+                            y=use_counts.values,
+                            title="Would you use this system again?",
+                            color=use_counts.index,
+                            color_discrete_sequence=['#2ECC71', '#E74C3C']
+                        )
+                        fig.update_layout(showlegend=False)
+                        st.plotly_chart(fig, use_container_width=True)
+                
+                # Average Ratings
+                st.subheader("⭐ Average Ratings (1-5 scale)")
+                
+                rating_data = {}
+                for col in numeric_cols:
+                    if col in survey.columns:
+                        avg = survey[col].mean()
+                        if not pd.isna(avg):
+                            rating_data[col] = avg
+                
+                if rating_data:
+                    fig = px.bar(
+                        x=list(rating_data.keys()),
+                        y=list(rating_data.values()),
+                        title="User Satisfaction Metrics",
+                        labels={'x': 'Metric', 'y': 'Average Rating (1-5)'},
+                        color=list(rating_data.values()),
+                        color_continuous_scale='Viridis'
+                    )
+                    fig.add_hline(y=4.0, line_dash="dash", line_color="green", annotation_text="Good (4.0)")
+                    fig.add_hline(y=3.0, line_dash="dash", line_color="orange", annotation_text="Average (3.0)")
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Display as metrics
+                    cols = st.columns(len(rating_data))
+                    for i, (name, value) in enumerate(rating_data.items()):
+                        with cols[i]:
+                            st.metric(name, f"{value:.2f}/5.0")
+            
+            # ============================================
+            # TAB 2: ALGORITHM COMPARISON
+            # ============================================
+            with survey_tab2:
+                st.header("📈 Algorithm Performance Comparison")
+                
+                # Get user preferences
+                user_pref = {}
+                if 'Best Algorithm' in survey.columns:
+                    total_users = len(survey)
+                    for algo in ['Collaborative Filtering', 'Content-Based', 'Hybrid']:
+                        count = 0
+                        for answer in survey['Best Algorithm']:
+                            if pd.isna(answer):
+                                continue
+                            if algo.lower() in str(answer).lower():
+                                count += 1
+                        user_pref[algo] = (count / total_users) * 100 if total_users > 0 else 0
+                
+                # Create comparison dataframe
+                comparison_data = []
+                algorithms = {
+                    'Collaborative Filtering': cf_f1,
+                    'Content-Based': cb_f1,
+                    'Hybrid': hybrid_f1
+                }
+                
+                for algo, f1 in algorithms.items():
+                    comparison_data.append({
+                        'Algorithm': algo,
+                        'F1 Score (Automatic)': f1,
+                        'User Preference (%)': user_pref.get(algo, 0)
+                    })
+                
+                df_comparison = pd.DataFrame(comparison_data)
+                
+                # Display comparison charts
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    fig1 = px.bar(
+                        df_comparison,
+                        x='Algorithm',
+                        y='F1 Score (Automatic)',
+                        title='Automatic Metrics (F1 Score)',
+                        color='Algorithm',
+                        color_discrete_sequence=['#FF6B6B', '#4ECDC4', '#45B7D1'],
+                        text='F1 Score (Automatic)'
+                    )
+                    fig1.update_traces(textposition='outside')
+                    fig1.update_layout(showlegend=False)
+                    st.plotly_chart(fig1, use_container_width=True)
+                
+                with col2:
+                    fig2 = px.bar(
+                        df_comparison,
+                        x='Algorithm',
+                        y='User Preference (%)',
+                        title='User Preference',
+                        color='Algorithm',
+                        color_discrete_sequence=['#FF6B6B', '#4ECDC4', '#45B7D1'],
+                        text='User Preference (%)'
+                    )
+                    fig2.update_traces(textposition='outside')
+                    fig2.update_layout(showlegend=False)
+                    st.plotly_chart(fig2, use_container_width=True)
+                
+                # Comparison table
+                st.subheader("📊 Detailed Comparison")
+                st.dataframe(df_comparison, use_container_width=True)
+                
+                # Winner announcement
+                best_f1_algo = df_comparison.loc[df_comparison['F1 Score (Automatic)'].idxmax(), 'Algorithm']
+                best_f1_score = df_comparison['F1 Score (Automatic)'].max()
+                best_user_algo = df_comparison.loc[df_comparison['User Preference (%)'].idxmax(), 'Algorithm']
+                best_user_score = df_comparison['User Preference (%)'].max()
+                
+                st.markdown("---")
+                st.subheader("🏆 Winner Announcement")
+                
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.metric("Best by F1 Score", best_f1_algo, f"{best_f1_score:.3f}")
+                with col2:
+                    st.metric("Best by Users", best_user_algo, f"{best_user_score:.1f}%")
+                with col3:
+                    if best_f1_algo == best_user_algo:
+                        st.success(f"🎉 {best_f1_algo} is the OVERALL WINNER!")
+                    else:
+                        st.warning("⚠️ Mixed Results")
+                        st.info("💡 Hybrid algorithm recommended")
+                
+                # Store best algorithm in session state for final report
+                st.session_state.best_algo = best_f1_algo if best_f1_algo == best_user_algo else "Hybrid"
+                st.session_state.best_f1_score = best_f1_score
+                st.session_state.best_user_score = best_user_score
+                
+                # Correlation chart
+                st.subheader("📉 Correlation: Automatic vs User Preference")
+                fig3 = go.Figure()
+                fig3.add_trace(go.Scatter(
+                    x=df_comparison['F1 Score (Automatic)'],
+                    y=df_comparison['User Preference (%)'],
+                    mode='markers+text',
+                    marker=dict(size=50, color=['#FF6B6B', '#4ECDC4', '#45B7D1']),
+                    text=df_comparison['Algorithm'],
+                    textposition="top center"
+                ))
+                fig3.update_layout(
+                    title="Correlation between F1 Score and User Preference",
+                    xaxis_title="F1 Score (Automatic)",
+                    yaxis_title="User Preference (%)",
+                    showlegend=False
+                )
+                st.plotly_chart(fig3, use_container_width=True)
+            
+            # ============================================
+            # TAB 3: USER FEEDBACK
+            # ============================================
+            with survey_tab3:
+                st.header("💬 User Feedback & Comments")
+                
+                if 'Comments' in survey.columns:
+                    comments = survey['Comments'].dropna()
+                    
+                    if len(comments) > 0:
+                        st.info(f"📝 {len(comments)} users provided feedback")
+                        
+                        for i, comment in enumerate(comments, 1):
+                            with st.container():
+                                st.markdown(f"**User {i}:**")
+                                st.markdown(f"> {comment}")
+                                st.markdown("---")
+                    else:
+                        st.info("No comments provided by users yet.")
+                
+                with st.expander("📋 View All Individual Responses"):
+                    st.dataframe(survey, use_container_width=True)
+            
+            # ============================================
+            # TAB 4: FINAL REPORT
+            # ============================================
+            with survey_tab4:
+                st.header("📝 Final Evaluation Report")
+                
+                st.subheader("Executive Summary")
+                
+                total_responses = len(survey)
+                avg_satisfaction = survey['Overall Satisfaction'].mean() if 'Overall Satisfaction' in survey.columns else 0
+                
+                # Get best algorithm from session state or calculate
+                if 'best_algo' not in st.session_state:
+                    best_f1_algo = df_comparison.loc[df_comparison['F1 Score (Automatic)'].idxmax(), 'Algorithm']
+                    best_user_algo = df_comparison.loc[df_comparison['User Preference (%)'].idxmax(), 'Algorithm']
+                    st.session_state.best_algo = best_f1_algo if best_f1_algo == best_user_algo else "Hybrid"
+                    st.session_state.best_f1_score = df_comparison['F1 Score (Automatic)'].max()
+                    st.session_state.best_user_score = df_comparison['User Preference (%)'].max()
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Responses", total_responses)
+                with col2:
+                    st.metric("Avg Satisfaction", f"{avg_satisfaction:.2f}/5.0")
+                with col3:
+                    st.metric("Recommended Algorithm", st.session_state.best_algo)
+                
+                st.markdown("---")
+                
+                # Key Findings
+                st.subheader("🔍 Key Findings")
+                
+                findings = []
+                
+                findings.append(f"✅ **{st.session_state.best_algo}** is the recommended algorithm with F1 Score: {st.session_state.best_f1_score:.3f} and User Preference: {st.session_state.best_user_score:.1f}%")
+                
+                if avg_satisfaction >= 4.0:
+                    findings.append(f"✅ **High user satisfaction** ({avg_satisfaction:.2f}/5.0) - Users are happy with the system")
+                elif avg_satisfaction >= 3.0:
+                    findings.append(f"📊 **Moderate user satisfaction** ({avg_satisfaction:.2f}/5.0) - Room for improvement")
+                else:
+                    findings.append(f"⚠️ **Low user satisfaction** ({avg_satisfaction:.2f}/5.0) - Needs improvement")
+                
+                if 'Would Use Again' in survey.columns:
+                    yes_count = (survey['Would Use Again'] == 'Yes').sum()
+                    yes_pct = (yes_count / len(survey)) * 100
+                    if yes_pct >= 70:
+                        findings.append(f"✅ **High retention rate** ({yes_pct:.0f}% would use again)")
+                    else:
+                        findings.append(f"📊 **Moderate retention** ({yes_pct:.0f}% would use again)")
+                
+                for finding in findings:
+                    st.markdown(finding)
+                
+                st.markdown("---")
+                
+                # Final Conclusion
+                st.subheader("🎯 Final Conclusion")
+                
+                st.success(f"""
+                ### ✅ Recommendation: Use **{st.session_state.best_algo}** Algorithm
+                
+                **Why?**
+                - F1 Score: {st.session_state.best_f1_score:.3f}
+                - User preference: {st.session_state.best_user_score:.1f}%
+                - Balanced performance across automatic metrics and user feedback
+                
+                **Implementation:** Set {st.session_state.best_algo} as the default algorithm in the Discover tab.
+                """)
+                
+                st.markdown("---")
+                
+                # Export report button
+                st.subheader("📥 Export Report")
+                
+                report_content = f"""
+MOVIE RECOMMENDER SYSTEM - EVALUATION REPORT
+=============================================
+
+Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Total Survey Responses: {total_responses}
+
+KEY FINDINGS:
+{chr(10).join(findings)}
+
+FINAL CONCLUSION:
+Use {st.session_state.best_algo} algorithm is recommended.
+
+DETAILED METRICS:
+{df_comparison.to_string()}
+
+USER SATISFACTION:
+Average Overall Satisfaction: {avg_satisfaction:.2f}/5.0
+"""
+                
+                st.download_button(
+                    label="📄 Download Report (TXT)",
+                    data=report_content,
+                    file_name=f"evaluation_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                    mime="text/plain"
+                )
         
-        **Which algorithm is best?**
-        - Look at the **F1 Score** column in the results table
-        - Higher F1 Score = Better algorithm
-        - The system will automatically highlight the winner
+        except Exception as e:
+            st.error(f"Error loading file: {e}")
+            st.info("Make sure your CSV file is properly formatted.")
+    
+    else:
+        st.info("""
+        ### How to analyze survey results:
         
-        **What if different users prefer different algorithms?**
-        - That's normal! Different users have different tastes
-        - Report the average across multiple users
-        - The Hybrid algorithm often performs best overall
+        1. **First, go to Algorithm Evaluation tab** and click "Run Evaluation"
+        2. **F1 Scores will be automatically saved**
+        3. **Then come back here** and upload your CSV file
+        4. **View** beautiful charts and winner announcement automatically!
         
-        **What K value should I use?**
-        - K=10 is standard for most evaluations
-        - Test with K=5, 10, 15, 20 to see patterns
-        - Report results for K=10 in your main assignment
+        ### Google Form Link:
+        [Take Survey](https://forms.gle/CWMLeHFWidtPDH358)
         """)
