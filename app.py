@@ -13,23 +13,24 @@ from recommender import (
     global_browse_movies,
     data,
     evaluate_recommendations, 
-    calculate_rmse  
+    calculate_rmse,
+    links
 )
 from poster import fetch_poster
 
 # 1. Page Config must be FIRST
 st.set_page_config(page_title="Emotion Movie Recommender", layout="wide")
 
-# 2. CSS for POSTERS - Balanced size
+# 2. CSS for cleaner UI
 st.markdown("""
     <style>
-    /* Main app container - reduce padding */
+    /* Main app container */
     .main > div {
         padding-left: 0.5rem !important;
         padding-right: 0.5rem !important;
     }
     
-    /* Movie card - balanced size */
+    /* Movie card */
     .movie-card {
         height: 420px !important;
         width: 100% !important;
@@ -43,7 +44,38 @@ st.markdown("""
         overflow: hidden !important;
     }
     
-    /* Poster size - visible but fits */
+    /* Big featured movie poster */
+    .featured-movie-card {
+        background-color: #1a1a2e;
+        border-radius: 12px;
+        padding: 20px !important;
+        margin-bottom: 30px !important;
+        border: 2px solid #FF4B4B;
+        text-align: center;
+    }
+    
+    .featured-poster {
+        height: 400px !important;
+        width: auto !important;
+        max-width: 100% !important;
+        object-fit: contain !important;
+        border-radius: 10px;
+        margin-bottom: 15px !important;
+    }
+    
+    .featured-title {
+        font-size: 1.5rem !important;
+        font-weight: bold;
+        color: #FF4B4B;
+        margin-bottom: 10px;
+    }
+    
+    .featured-info {
+        font-size: 1rem !important;
+        color: #ccc;
+    }
+    
+    /* Poster size */
     .movie-poster {
         height: 280px !important;
         width: 100% !important;
@@ -52,7 +84,7 @@ st.markdown("""
         margin-bottom: 8px !important;
     }
     
-    /* Title styling - readable */
+    /* Title styling */
     .movie-title {
         font-weight: bold;
         font-size: 0.85rem !important;
@@ -66,7 +98,7 @@ st.markdown("""
         line-height: 1.3;
     }
     
-    /* Info text - readable */
+    /* Info text */
     .movie-info {
         font-size: 0.7rem !important;
         text-align: center;
@@ -76,17 +108,40 @@ st.markdown("""
         line-height: 1.4;
     }
     
-    /* Reduce gap between columns */
+    /* Columns spacing */
     .row-widget.stHorizontal {
         gap: 0.3rem !important;
     }
     
-    /* Force columns to be equal width */
     .stColumn {
         flex: 1 !important;
         min-width: 0 !important;
         padding-left: 0.2rem !important;
         padding-right: 0.2rem !important;
+    }
+    
+    /* Custom divider */
+    .custom-divider {
+        margin: 15px 0;
+        border-top: 1px solid #444;
+    }
+    
+    /* Section header */
+    .rec-header {
+        font-size: 1.3rem;
+        font-weight: bold;
+        margin: 15px 0 10px 0;
+        color: #FF4B4B;
+    }
+    
+    /* Compact info box */
+    .compact-info {
+        background-color: #1e1e2e;
+        padding: 8px 15px;
+        border-radius: 8px;
+        margin: 10px 0;
+        font-size: 0.85rem;
+        border-left: 4px solid #FF4B4B;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -115,121 +170,392 @@ def display_movie_card(poster_url, title, rating, genres):
     """
     st.markdown(card_html, unsafe_allow_html=True)
 
-# --- TABS ---
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["✨ Discover", "📂 Browse Library", "🔥 Trending", "📊 Algorithm Evaluation", "📋 Survey Dashboard"])
+
+def display_featured_movie(poster_url, title, rating, genres, year=None):
+    """Display a large featured movie poster"""
+    if rating == "N/A" or pd.isna(rating):
+        rating_text = "Not rated"
+    else:
+        rating_text = f"⭐ {float(rating):.1f} / 5.0"
+    
+    year_text = f"📅 {year}" if year else ""
+    
+    card_html = f"""
+    <div class="featured-movie-card">
+        <img class="featured-poster" src="{poster_url}" onerror="this.src='https://via.placeholder.com/500x750?text=No+Poster'">
+        <div class="featured-title">{title}</div>
+        <div class="featured-info">{rating_text} | 🎭 {genres} {year_text}</div>
+    </div>
+    """
+    st.markdown(card_html, unsafe_allow_html=True)
+
+
+def get_movie_year(title):
+    """Extract year from movie title like 'Toy Story (1995)'"""
+    import re
+    match = re.search(r'\((\d{4})\)', title)
+    return match.group(1) if match else "Unknown"
+
 
 # ============================================
-# TAB 1: DISCOVER
+# HELPER FUNCTION FOR TRENDING WITH FILTERS
 # ============================================
+def get_filtered_trending_movies(limit=20, selected_genres=None, min_rating=0.0, year_range=None, search_term=""):
+    """
+    Get trending movies with filters applied
+    """
+    # Get all movies with their average ratings
+    movie_ratings = data.groupby("title")["rating"].mean().reset_index()
+    movie_ratings.columns = ["title", "avg_rating"]
+    
+    # Merge with movie details
+    trending_df = movies.merge(movie_ratings, on="title", how="inner")
+    
+    # Filter by year range
+    if year_range:
+        trending_df = trending_df[(trending_df["year"] >= year_range[0]) & (trending_df["year"] <= year_range[1])]
+    
+    # Filter by genre
+    if selected_genres:
+        genre_regex = "|".join(selected_genres)
+        trending_df = trending_df[trending_df["genres"].str.contains(genre_regex, case=False, na=False)]
+    
+    # Filter by minimum rating
+    trending_df = trending_df[trending_df["avg_rating"] >= min_rating]
+    
+    # Filter by search term
+    if search_term:
+        trending_df = trending_df[trending_df["title"].str.lower().str.contains(search_term.lower(), na=False)]
+    
+    # Sort by rating (highest first)
+    trending_df = trending_df.sort_values("avg_rating", ascending=False)
+    
+    # Add TMDB IDs
+    trending_df = trending_df.merge(links[['movieId', 'tmdbId']], on="movieId", how="left")
+    
+    return trending_df.head(limit) if limit > 0 else trending_df
+
+
+# ============================================
+# TAB 1: DISCOVER (COMPACT & ORGANIZED)
+# ============================================
+tab1, tab2, tab3, tab4 = st.tabs(["✨ Discover", "🔥 Trending", "📊 Algorithm Evaluation", "📋 Survey Dashboard"])
+
 with tab1:
-    st.subheader("Personalized for your Mood")
+    # ROW 1: Core Controls (Mood, Algorithm, Movie Search)
+    col1, col2, col3 = st.columns([1, 1, 2])
     
-    col_mood, col_algo, col_movie = st.columns([2, 2, 4])
-
-    with col_mood:
-        emotion = st.selectbox("Select your mood", ["Happy", "Sad", "Stressed", "Excited", "Romantic"], key="tab1_mood")
-        
-    with col_algo:
-        algorithm = st.selectbox("Algorithm", ["Collaborative Filtering", "Content-Based", "Hybrid"], key="tab1_algo")
-
-    with col_movie:
-        movie_title = st.selectbox("Choose a movie you like:", movies["title"].values, key="tab1_movie_select")
+    with col1:
+        emotion = st.selectbox(
+            "🎭 Your Mood",
+            ["Happy", "Sad", "Stressed", "Excited", "Romantic"],
+            key="mood"
+        )
     
-    num_recs = st.slider("Number of Recommendations", 5, 50, 10, key="tab1_res")
-
-    if st.button("Generate Recommendations", type="primary"):
-        with st.spinner('AI is thinking...'):
-            try:
-                if algorithm == "Collaborative Filtering":
-                    recs = recommend_movies(movie_title, emotion, top_n=num_recs)
-                elif algorithm == "Content-Based":
-                    recs = recommend_movies_cb(movie_title, emotion, top_n=num_recs)
-                else:
-                    recs = recommend_movies_hybrid(movie_title, emotion, top_n=num_recs)
-
-                recs = recs[:num_recs]
-
-                if recs:
-                    st.subheader(f"Recommended for You ({len(recs)} movies)")
-                    
-                    for i in range(0, len(recs), 5):
-                        cols = st.columns(5)
-                        for j in range(5):
-                            idx = i + j
-                            if idx < len(recs):
-                                movie = recs[idx]
-                                details = get_movie_details(movie)
-                                poster = fetch_poster(details['tmdbId'])
-                                with cols[j]:
-                                    display_movie_card(
-                                        poster_url=poster,
-                                        title=movie,
-                                        rating=details['rating'],
-                                        genres=details['genres'].replace('|', ', ')
-                                    )
-                else:
-                    st.warning("No recommendations found.")
-            except Exception as e:
-                st.error(f"Error: {e}")
-
-# ============================================
-# TAB 2: BROWSE LIBRARY
-# ============================================
-with tab2:
-    st.header("🔍 Search & Filter Library")
-    search = st.text_input("🔍 Search for a specific title in the catalog")
+    with col2:
+        algorithm = st.selectbox(
+            "🧠 Algorithm",
+            ["Collaborative Filtering", "Content-Based", "Hybrid"],
+            key="algo",
+            help="CF: People who liked this also liked... | CB: Similar movies | Hybrid: Best of both"
+        )
     
-    c1, c2, c3, c4, c5, c6 = st.columns([2, 2, 1.5, 1.5, 1.5, 1.5])
-
-    with c1:
+    with col3:
+        search_movie = st.text_input(
+            "🔍 Search for a movie",
+            placeholder="Type movie title... (e.g., Toy Story, Inception)",
+            key="search_movie"
+        )
+    
+    # ROW 2: Movie Selection (appears after search)
+    if search_movie:
+        filtered_movies = movies[movies["title"].str.lower().str.contains(search_movie.lower(), na=False)]
+    else:
+        filtered_movies = movies.head(10)
+    
+    if len(filtered_movies) > 0:
+        selected_movie = st.selectbox(
+            "📽️ Select your movie",
+            filtered_movies["title"].values,
+            key="selected_movie"
+        )
+    else:
+        st.warning("No movies found. Try a different search term.")
+        selected_movie = None
+    
+    # ROW 3: Filter Controls in 3 columns (compact)
+    st.markdown("---")
+    col_f1, col_f2, col_f3 = st.columns(3)
+    
+    with col_f1:
+        # Genre filter
         raw_genres = movies["genres"].str.split('|').explode().unique()
         all_genres = sorted([g for g in raw_genres if pd.notna(g) and g != "" and g != "(no genres listed)"])
-        selected_genres = st.multiselect("Genre Filter", all_genres, key="br_gen")
-
-    with c2:
+        selected_genres = st.multiselect(
+            "🎭 Genre Filter",
+            all_genres,
+            key="genres",
+            placeholder="All genres"
+        )
+        
+        # Number of recommendations
+        num_recs = st.slider(
+            "📊 Recommendations",
+            min_value=5, max_value=50, value=10,
+            key="num_recs"
+        )
+    
+    with col_f2:
+        # Year range
         valid_years = movies[movies['year'] > 0]['year']
-        min_v, max_v = int(valid_years.min()), int(valid_years.max())
-        year_range = st.slider("Year Range", min_v, max_v, (1990, max_v), key="br_yr")
+        min_year, max_year = int(valid_years.min()), int(valid_years.max())
+        year_range = st.slider(
+            "📅 Year Range",
+            min_year, max_year,
+            (min_year, max_year),
+            key="year"
+        )
+        
+        # Minimum rating
+        min_rating = st.slider(
+            "⭐ Min Rating",
+            0.0, 5.0, 0.0, 0.1,
+            key="rating"
+        )
+    
+    with col_f3:
+        # Sort options
+        sort_choice = st.selectbox(
+            "📊 Sort By",
+            ["Rating", "A-Z", "Year"],
+            key="sort"
+        )
+        
+        sort_order = st.selectbox(
+            "🔼 Order",
+            ["Descending", "Ascending"],
+            key="order"
+        )
+        
+        result_limit = st.number_input(
+            "📄 Max Results",
+            min_value=1, max_value=100, value=20,
+            key="limit"
+        )
+    
+    # ROW 4: Emotion Info Box (compact)
+    if algorithm == "Collaborative Filtering":
+        st.markdown('<div class="compact-info">😊 <strong>Emotion effect:</strong> Movies matching your mood get a <strong>3x boost</strong> in ranking.</div>', unsafe_allow_html=True)
+    elif algorithm == "Content-Based":
+        st.markdown('<div class="compact-info">😊 <strong>Emotion effect:</strong> Movies matching your mood get a <strong>5x boost</strong>. Non-matching movies are penalized (0.2x).</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="compact-info">😊 <strong>Emotion effect:</strong> <strong>60%</strong> mood-based + <strong>40%</strong> movie similarity.</div>', unsafe_allow_html=True)
+    
+    # ROW 5: Generate Button
+    if st.button("🎬 Get Recommendations", type="primary", use_container_width=True):
+        if not selected_movie:
+            st.error("Please search and select a movie first!")
+        else:
+            with st.spinner("Finding your perfect movies based on your mood..."):
+                
+                # ===== DISPLAY FEATURED MOVIE =====
+                st.markdown('<div class="rec-header">🎥 Your Selected Movie</div>', unsafe_allow_html=True)
+                
+                movie_details = get_movie_details(selected_movie)
+                movie_year = get_movie_year(selected_movie)
+                poster_url = fetch_poster(movie_details['tmdbId'])
+                
+                display_featured_movie(
+                    poster_url=poster_url,
+                    title=selected_movie,
+                    rating=movie_details['rating'],
+                    genres=movie_details['genres'].replace('|', ', '),
+                    year=movie_year
+                )
+                
+                # ===== PART 1: PERSONALIZED RECOMMENDATIONS =====
+                try:
+                    if algorithm == "Collaborative Filtering":
+                        recs = recommend_movies(selected_movie, emotion, top_n=num_recs)
+                        section_title = "👥 People who liked this also liked..."
+                        explanation = f"Based on other users' preferences + {emotion} movies boosted"
+                    elif algorithm == "Content-Based":
+                        recs = recommend_movies_cb(selected_movie, emotion, top_n=num_recs)
+                        section_title = "🎬 You may also like..."
+                        explanation = f"Based on similar genres + {emotion} movies get 5x boost"
+                    else:
+                        recs = recommend_movies_hybrid(selected_movie, emotion, top_n=num_recs)
+                        section_title = "🔮 Best Matches For You"
+                        explanation = f"60% based on {emotion} mood + 40% based on similarity"
+                    
+                    recs = recs[:num_recs]
+                    
+                    if recs:
+                        st.markdown(f'<div class="rec-header">{section_title}</div>', unsafe_allow_html=True)
+                        st.caption(f"💡 {explanation}")
+                        
+                        for i in range(0, len(recs), 5):
+                            cols = st.columns(5)
+                            for j in range(5):
+                                idx = i + j
+                                if idx < len(recs):
+                                    movie = recs[idx]
+                                    details = get_movie_details(movie)
+                                    poster = fetch_poster(details['tmdbId'])
+                                    with cols[j]:
+                                        display_movie_card(
+                                            poster_url=poster,
+                                            title=movie,
+                                            rating=details['rating'],
+                                            genres=details['genres'].replace('|', ', ')
+                                        )
+                    else:
+                        st.warning("No recommendations found. Try a different movie or algorithm.")
+                    
+                    # ===== PART 2: FILTERED LIBRARY =====
+                    st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
+                    st.markdown('<div class="rec-header">📚 Browse All Movies</div>', unsafe_allow_html=True)
+                    
+                    filtered_df = global_browse_movies(
+                        movies_df=movies,
+                        ratings_df=data,
+                        selected_genres=selected_genres,
+                        min_rating=min_rating,
+                        sort_by=sort_choice,
+                        sort_order=sort_order, 
+                        year_range=year_range
+                    )
+                    
+                    if selected_movie:
+                        filtered_df = filtered_df[filtered_df["title"] != selected_movie]
+                    
+                    if not filtered_df.empty:
+                        st.caption(f"📊 Showing {min(len(filtered_df), result_limit)} of {len(filtered_df)} movies")
+                        
+                        movies_list = filtered_df.head(result_limit).to_dict('records')
+                        for i in range(0, len(movies_list), 5):
+                            cols = st.columns(5)
+                            for j in range(5):
+                                idx = i + j
+                                if idx < len(movies_list):
+                                    row = movies_list[idx]
+                                    tmdb_id = row.get('tmdbId', None)
+                                    if tmdb_id and pd.notna(tmdb_id):
+                                        poster = fetch_poster(tmdb_id)
+                                    else:
+                                        poster = "https://via.placeholder.com/500x750?text=No+Poster"
+                                    with cols[j]:
+                                        display_movie_card(
+                                            poster_url=poster,
+                                            title=row['title'],
+                                            rating=round(row['rating'], 1),
+                                            genres=row['genres'].replace('|', ', ')
+                                        )
+                    else:
+                        st.info("No movies match your filters. Try adjusting genre, year, or rating.")
+                        
+                except Exception as e:
+                    st.error(f"Something went wrong: {e}")
+    
+    else:
+        # Show info when no button clicked
+        st.info("👆 **Search for a movie above**, then click **Get Recommendations**!")
+        
+        with st.expander("🌟 Popular Movies (Preview)", expanded=False):
+            popular_preview = get_popular_movies().head(10)
+            popular_list = list(popular_preview.items())
+            for i in range(0, len(popular_list), 5):
+                cols = st.columns(5)
+                for j in range(5):
+                    idx = i + j
+                    if idx < len(popular_list):
+                        title, rating = popular_list[idx]
+                        details = get_movie_details(title)
+                        poster = fetch_poster(details['tmdbId'])
+                        with cols[j]:
+                            display_movie_card(
+                                poster_url=poster,
+                                title=title,
+                                rating=round(rating, 2),
+                                genres=details['genres'].replace('|', ', ')
+                            )
 
-    with c3:
-        min_rating = st.slider("Min Rating", 0.0, 5.0, 0.0, 0.1, key="br_rate")
 
-    with c4:
-        sort_choice = st.selectbox("Sort By", ["Rating", "A-Z", "Year"], key="br_sort")
-
-    with c5:
-        sort_order = st.selectbox("Order", ["Descending", "Ascending"], key="br_order")
-
-    with c6:
-        num_results = st.number_input("Limit", min_value=1, max_value=100, value=10, key="br_limit")
-
-    if st.button("Apply Library Filters", type="primary", use_container_width=True):
-        with st.spinner('Filtering results...'):
-            filtered_df = global_browse_movies(
-                movies_df=movies,
-                ratings_df=data,
-                selected_genres=selected_genres,
-                min_rating=min_rating,
-                sort_by=sort_choice,
-                sort_order=sort_order, 
-                year_range=year_range
+# ============================================
+# TAB 2: TRENDING (WITH FILTERS)
+# ============================================
+with tab2:
+    st.subheader("🔥 Top Rated by the Community")
+    st.caption("Movies with the highest average ratings from all users")
+    
+    # Filter controls for trending
+    col_f1, col_f2, col_f3, col_f4 = st.columns([2, 2, 2, 1])
+    
+    with col_f1:
+        trending_limit = st.selectbox(
+            "Number of movies",
+            [10, 20, 30, 40, 50, 100, "All"],
+            index=1,
+            key="trending_limit"
+        )
+        if trending_limit == "All":
+            trending_limit = 9999
+        else:
+            trending_limit = int(trending_limit)
+    
+    with col_f2:
+        raw_genres_trending = movies["genres"].str.split('|').explode().unique()
+        all_genres_trending = sorted([g for g in raw_genres_trending if pd.notna(g) and g != "" and g != "(no genres listed)"])
+        trending_genres = st.multiselect(
+            "Filter by genre",
+            all_genres_trending,
+            key="trending_genres",
+            placeholder="All genres"
+        )
+    
+    with col_f3:
+        valid_years_trending = movies[movies['year'] > 0]['year']
+        min_year_t, max_year_t = int(valid_years_trending.min()), int(valid_years_trending.max())
+        trending_year_range = st.slider(
+            "Year range",
+            min_year_t, max_year_t,
+            (min_year_t, max_year_t),
+            key="trending_year"
+        )
+    
+    with col_f4:
+        trending_min_rating = st.slider(
+            "Min rating",
+            0.0, 5.0, 0.0, 0.5,
+            key="trending_rating"
+        )
+    
+    trending_search = st.text_input(
+        "🔍 Search in trending movies",
+        placeholder="Type movie name...",
+        key="trending_search"
+    )
+    
+    if st.button("🎯 Apply Trending Filters", type="primary", use_container_width=True, key="trending_apply"):
+        with st.spinner("Loading trending movies..."):
+            trending_df = get_filtered_trending_movies(
+                limit=trending_limit,
+                selected_genres=trending_genres,
+                min_rating=trending_min_rating,
+                year_range=trending_year_range,
+                search_term=trending_search
             )
             
-            if search:
-                filtered_df = filtered_df[filtered_df["title"].str.lower().str.contains(search.lower(), na=False)]
-
-            display_list = filtered_df.head(num_results)
-            
-            if not display_list.empty:
-                st.markdown(f"### Showing {len(display_list)} results")
+            if not trending_df.empty:
+                st.success(f"🔥 Found {len(trending_df)} trending movies")
                 
-                movies_list = display_list.to_dict('records')
-                for i in range(0, len(movies_list), 5):
+                trending_list = trending_df.to_dict('records')
+                for i in range(0, len(trending_list), 5):
                     cols = st.columns(5)
                     for j in range(5):
                         idx = i + j
-                        if idx < len(movies_list):
-                            row = movies_list[idx]
+                        if idx < len(trending_list):
+                            row = trending_list[idx]
                             tmdb_id = row.get('tmdbId', None)
                             if tmdb_id and pd.notna(tmdb_id):
                                 poster = fetch_poster(tmdb_id)
@@ -239,41 +565,49 @@ with tab2:
                                 display_movie_card(
                                     poster_url=poster,
                                     title=row['title'],
-                                    rating=round(row['rating'], 1),
+                                    rating=round(row['avg_rating'], 2),
                                     genres=row['genres'].replace('|', ', ')
                                 )
             else:
-                st.warning("No movies found matching your search and filter criteria.")
+                st.warning("No movies found matching your filters.")
+    
+    else:
+        with st.spinner("Loading trending movies..."):
+            trending_df = get_filtered_trending_movies(
+                limit=20,
+                selected_genres=[],
+                min_rating=0.0,
+                year_range=(min_year_t, max_year_t),
+                search_term=""
+            )
+            
+            st.info("👆 Use the filters above to customize your trending list!")
+            
+            trending_list = trending_df.to_dict('records')
+            for i in range(0, len(trending_list), 5):
+                cols = st.columns(5)
+                for j in range(5):
+                    idx = i + j
+                    if idx < len(trending_list):
+                        row = trending_list[idx]
+                        tmdb_id = row.get('tmdbId', None)
+                        if tmdb_id and pd.notna(tmdb_id):
+                            poster = fetch_poster(tmdb_id)
+                        else:
+                            poster = "https://via.placeholder.com/500x750?text=No+Poster"
+                        with cols[j]:
+                            display_movie_card(
+                                poster_url=poster,
+                                title=row['title'],
+                                rating=round(row['avg_rating'], 2),
+                                genres=row['genres'].replace('|', ', ')
+                            )
+
 
 # ============================================
-# TAB 3: TRENDING
+# TAB 3: ALGORITHM EVALUATION
 # ============================================
 with tab3:
-    st.subheader("Top Rated by the Community")
-    popular_data = get_popular_movies()
-    
-    popular_list = list(popular_data.items())
-
-    for i in range(0, len(popular_list), 5):
-        cols = st.columns(5)
-        for j in range(5):
-            idx = i + j
-            if idx < len(popular_list):
-                title, rating = popular_list[idx]
-                details = get_movie_details(title)
-                poster = fetch_poster(details['tmdbId'])
-                with cols[j]:
-                    display_movie_card(
-                        poster_url=poster,
-                        title=title,
-                        rating=round(rating, 2),
-                        genres=details['genres'].replace('|', ', ')
-                    )
-
-# ============================================
-# TAB 4: ALGORITHM EVALUATION (with Session State)
-# ============================================
-with tab4:
     st.header("📊 Algorithm Evaluation")
     
     st.markdown("""
@@ -411,7 +745,6 @@ with tab4:
                             "Recall": result["recall"],
                             "F1 Score": result["f1"]
                         })
-                        # Save F1 scores to session state
                         if algo_name == "Collaborative Filtering":
                             st.session_state.cf_f1 = result["f1"]
                         elif algo_name == "Content-Based":
@@ -427,7 +760,6 @@ with tab4:
                     
                     best_algo_row = df_results.loc[df_results["F1 Score"].idxmax()]
                     best_algo_name = best_algo_row["Algorithm"]
-                    best_f1 = best_algo_row["F1 Score"]
                     
                     st.success(f"🏆 **{best_algo_name} is the BEST performing algorithm!**")
                     st.info(f"📊 F1 Scores saved! Go to **Survey Dashboard** tab to compare with user feedback.")
@@ -447,15 +779,15 @@ with tab4:
                 else:
                     st.warning("No results generated. Try a different User ID.")
 
+
 # ============================================
-# TAB 5: SURVEY DASHBOARD (Fixed - No Type Errors)
+# TAB 4: SURVEY DASHBOARD
 # ============================================
-with tab5:
+with tab4:
     st.header("📋 Survey Analysis Dashboard")
     st.markdown("Upload your Google Form responses to see visual analysis and compare with automatic metrics.")
     st.markdown("---")
     
-    # Display saved F1 Scores from evaluation
     if st.session_state.eval_run:
         st.success(f"✅ **F1 Scores loaded from Algorithm Evaluation:** CF={st.session_state.cf_f1:.3f}, CB={st.session_state.cb_f1:.3f}, Hybrid={st.session_state.hybrid_f1:.3f}")
     else:
@@ -463,18 +795,15 @@ with tab5:
     
     st.markdown("---")
     
-    # File uploader for CSV
     uploaded_file = st.file_uploader(
         "📁 Upload Google Form responses (CSV file)",
         type=['csv'],
         help="Export your Google Form responses as CSV and upload here"
     )
     
-    # Manual override (optional - collapsed by default) - FIXED VERSION
     with st.expander("🔧 Manual F1 Score Input (Optional)"):
         st.warning("Only use this if you want to override the automatically saved scores.")
         
-        # Convert session state values to Python float to avoid type issues
         default_cf = float(st.session_state.cf_f1)
         default_cb = float(st.session_state.cb_f1)
         default_hybrid = float(st.session_state.hybrid_f1)
@@ -520,11 +849,9 @@ with tab5:
     
     if uploaded_file is not None:
         try:
-            # Load survey data
             survey = pd.read_csv(uploaded_file)
             st.success(f"✅ Loaded {len(survey)} survey responses!")
             
-            # COLUMN MAPPING (Your Google Form columns)
             COLUMN_MAPPING = {
                 '1. Which recommendation algorithm did you test?': 'Best Algorithm',
                 '2. How relevant were the movie recommendations?': 'Recommendation Quality',
@@ -535,28 +862,21 @@ with tab5:
                 '7. Any additional feedback or suggestions?': 'Comments',
             }
             
-            # Rename columns
             for old, new in COLUMN_MAPPING.items():
                 if old in survey.columns:
                     survey.rename(columns={old: new}, inplace=True)
             
-            # Convert numeric columns
             numeric_cols = ['Recommendation Quality', 'Mood Accuracy', 'Suggestion Accuracy', 'Overall Satisfaction']
             for col in numeric_cols:
                 if col in survey.columns:
                     survey[col] = pd.to_numeric(survey[col], errors='coerce')
             
-            # Use saved F1 scores from session state (convert to float)
             cf_f1 = float(st.session_state.cf_f1)
             cb_f1 = float(st.session_state.cb_f1)
             hybrid_f1 = float(st.session_state.hybrid_f1)
             
-            # Create tabs within the survey dashboard
             survey_tab1, survey_tab2, survey_tab3, survey_tab4 = st.tabs(["📊 Survey Results", "📈 Algorithm Comparison", "💬 User Feedback", "📝 Final Report"])
             
-            # ============================================
-            # TAB 1: SURVEY RESULTS
-            # ============================================
             with survey_tab1:
                 st.header("📊 Survey Results Summary")
                 
@@ -591,7 +911,6 @@ with tab5:
                         fig.update_layout(showlegend=False)
                         st.plotly_chart(fig, use_container_width=True)
                 
-                # Average Ratings
                 st.subheader("⭐ Average Ratings (1-5 scale)")
                 
                 rating_data = {}
@@ -614,19 +933,14 @@ with tab5:
                     fig.add_hline(y=3.0, line_dash="dash", line_color="orange", annotation_text="Average (3.0)")
                     st.plotly_chart(fig, use_container_width=True)
                     
-                    # Display as metrics
                     cols = st.columns(len(rating_data))
                     for i, (name, value) in enumerate(rating_data.items()):
                         with cols[i]:
                             st.metric(name, f"{value:.2f}/5.0")
             
-            # ============================================
-            # TAB 2: ALGORITHM COMPARISON
-            # ============================================
             with survey_tab2:
                 st.header("📈 Algorithm Performance Comparison")
                 
-                # Get user preferences
                 user_pref = {}
                 if 'Best Algorithm' in survey.columns:
                     total_users = len(survey)
@@ -639,7 +953,6 @@ with tab5:
                                 count += 1
                         user_pref[algo] = (count / total_users) * 100 if total_users > 0 else 0
                 
-                # Create comparison dataframe
                 comparison_data = []
                 algorithms = {
                     'Collaborative Filtering': cf_f1,
@@ -656,7 +969,6 @@ with tab5:
                 
                 df_comparison = pd.DataFrame(comparison_data)
                 
-                # Display comparison charts
                 col1, col2 = st.columns(2)
                 
                 with col1:
@@ -687,11 +999,9 @@ with tab5:
                     fig2.update_layout(showlegend=False)
                     st.plotly_chart(fig2, use_container_width=True)
                 
-                # Comparison table
                 st.subheader("📊 Detailed Comparison")
                 st.dataframe(df_comparison, use_container_width=True)
                 
-                # Winner announcement
                 best_f1_algo = df_comparison.loc[df_comparison['F1 Score (Automatic)'].idxmax(), 'Algorithm']
                 best_f1_score = df_comparison['F1 Score (Automatic)'].max()
                 best_user_algo = df_comparison.loc[df_comparison['User Preference (%)'].idxmax(), 'Algorithm']
@@ -713,12 +1023,10 @@ with tab5:
                         st.warning("⚠️ Mixed Results")
                         st.info("💡 Hybrid algorithm recommended")
                 
-                # Store best algorithm in session state for final report
                 st.session_state.best_algo = best_f1_algo if best_f1_algo == best_user_algo else "Hybrid"
                 st.session_state.best_f1_score = best_f1_score
                 st.session_state.best_user_score = best_user_score
                 
-                # Correlation chart
                 st.subheader("📉 Correlation: Automatic vs User Preference")
                 fig3 = go.Figure()
                 fig3.add_trace(go.Scatter(
@@ -737,9 +1045,6 @@ with tab5:
                 )
                 st.plotly_chart(fig3, use_container_width=True)
             
-            # ============================================
-            # TAB 3: USER FEEDBACK
-            # ============================================
             with survey_tab3:
                 st.header("💬 User Feedback & Comments")
                 
@@ -760,9 +1065,6 @@ with tab5:
                 with st.expander("📋 View All Individual Responses"):
                     st.dataframe(survey, use_container_width=True)
             
-            # ============================================
-            # TAB 4: FINAL REPORT
-            # ============================================
             with survey_tab4:
                 st.header("📝 Final Evaluation Report")
                 
@@ -771,7 +1073,6 @@ with tab5:
                 total_responses = len(survey)
                 avg_satisfaction = survey['Overall Satisfaction'].mean() if 'Overall Satisfaction' in survey.columns else 0
                 
-                # Get best algorithm from session state or calculate
                 if 'best_algo' not in st.session_state:
                     best_f1_algo = df_comparison.loc[df_comparison['F1 Score (Automatic)'].idxmax(), 'Algorithm']
                     best_user_algo = df_comparison.loc[df_comparison['User Preference (%)'].idxmax(), 'Algorithm']
@@ -789,7 +1090,6 @@ with tab5:
                 
                 st.markdown("---")
                 
-                # Key Findings
                 st.subheader("🔍 Key Findings")
                 
                 findings = []
@@ -816,7 +1116,6 @@ with tab5:
                 
                 st.markdown("---")
                 
-                # Final Conclusion
                 st.subheader("🎯 Final Conclusion")
                 
                 st.success(f"""
@@ -832,7 +1131,6 @@ with tab5:
                 
                 st.markdown("---")
                 
-                # Export report button
                 st.subheader("📥 Export Report")
                 
                 report_content = f"""
