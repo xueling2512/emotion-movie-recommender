@@ -345,10 +345,10 @@ with tab1:
     
     # ROW 4: Emotion Info Box (compact)
     if algorithm == "Collaborative Filtering":
-        st.markdown('<div class="compact-info">😊 <strong>Emotion effect:</strong> Movies matching your mood get a <strong>3x boost</strong> in ranking.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="compact-info">😊 <strong>Emotion effect:</strong> Movies matching your mood get a <strong>10x boost</strong>. Non-matching movies receive a <strong>0.1x penalty</strong>.</div>', unsafe_allow_html=True)
     elif algorithm == "Content-Based":
         st.markdown('<div class="compact-info">😊 <strong>Emotion effect:</strong> Movies matching your mood get a <strong>5x boost</strong>. Non-matching movies are penalized (0.2x).</div>', unsafe_allow_html=True)
-    else:
+    else:  # Hybrid
         st.markdown('<div class="compact-info">😊 <strong>Emotion effect:</strong> <strong>60%</strong> mood-based + <strong>40%</strong> movie similarity.</div>', unsafe_allow_html=True)
     
     # ROW 5: Generate Button
